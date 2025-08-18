@@ -1,13 +1,8 @@
 [wifi]
-ssid=
-password=
-static=
-dns=
-gateway=
-subnet=
+ssid=test_ssid
+password=password1
 
 [motor]
-position=0
 max=0
 
 [boost]

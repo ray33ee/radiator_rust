@@ -9,13 +9,11 @@
 #![warn(clippy::pedantic)]
 #![warn(clippy::nursery)]
 #![warn(clippy::cargo)]
-#![warn(missing_docs)] // or deny
 #![warn(unsafe_code)]
 #![warn(unused_extern_crates)]
 #![warn(rust_2018_idioms)]
 #![warn(missing_debug_implementations)]
 #![warn(missing_copy_implementations)]
-#![warn(missing_docs)]
 #![warn(unreachable_pub)]
 #![warn(unused)]
 #![warn(dead_code)]
@@ -24,23 +22,50 @@
 #![warn(trivial_numeric_casts)]
 #![warn(variant_size_differences)]
 
-#[panic_handler]
-fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
-    loop {}
-}
+mod storage;
+mod server;
+mod commands;
+mod motor;
 
-mod config;
-
+use crate::commands::Function;
+use server::Server;
 use esp_hal::{
     clock::CpuClock,
     main,
-    time::{
-        Duration,
-        Instant
-    },
     timer::timg::TimerGroup,
+    delay::Delay,
+    rng::Rng,
+    time::Instant,
+    gpio::{
+        Output,
+        Level,
+        OutputConfig,
+    },
 };
-use esp_println::println;
+use smoltcp::{
+    iface::{
+        SocketStorage,
+        SocketSet,
+        Interface,
+    },
+    wire::{
+        DhcpOption,
+        IpAddress
+    },
+    socket::Socket,
+};
+use esp_println::{print, println};
+use esp_backtrace as _;
+use blocking_network_stack::{Stack, ipv4::Ipv4Addr};
+use esp_wifi::wifi::{ClientConfiguration, Configuration};
+use serde_json::to_string;
+use motor::Motor;
+
+
+/*#[panic_handler]
+fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
+    loop {}
+}*/
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -49,147 +74,166 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[main]
 fn main() -> ! {
     // generator version: 0.5.0
+    esp_alloc::heap_allocator!(size: 64 * 1024);
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    esp_alloc::heap_allocator!(size: 64 * 1024);
+    /* Set up the sd storage interface */
+    let mut store = storage::SdInterface::new(peripherals.SPI2, peripherals.GPIO4, peripherals.GPIO6, peripherals.GPIO5, peripherals.GPIO7);
+
+    if store.is_locked() {
+        println!("Motor is locked!");
+    }
+
+    /* Set up the wifi and web server */
+
+    let mut rng = Rng::new(peripherals.RNG);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    let _init = esp_wifi::init(timg0.timer0, esp_hal::rng::Rng::new(peripherals.RNG)).unwrap();
+    let esp_wifi_ctrl = esp_wifi::init(timg0.timer0, rng.clone()).unwrap();
 
-    const CONFIG_TEXT: &[u8] = br#"[wifi]
-ssid=name
-password=pswd
-static=192.168.0.1
-dns=192.168.1.255
-gateway=192.128.1.255
-subnet=255.255.255.0
+    let (mut controller, interfaces) =
+        esp_wifi::wifi::new(&esp_wifi_ctrl, peripherals.WIFI).unwrap();
 
-[motor]
-position=0
-max=40
+    let mut device = interfaces.sta;
+    let iface = create_interface(&mut device);
 
-[boost]
-short=600
-long=1800
+    let mut socket_set_entries: [SocketStorage; 3] = Default::default();
+    let mut socket_set = SocketSet::new(&mut socket_set_entries[..]);
+    let mut dhcp_socket = smoltcp::socket::dhcpv4::Socket::new();
+    // we can set a hostname here (or add other DHCP options)
+    dhcp_socket.set_outgoing_options(&[DhcpOption {
+        kind: 12,
+        data: b"esp-wifi",
+    }]);
+    socket_set.add(dhcp_socket);
 
-[schedule]
-variant=summer
+    let now = || Instant::now().duration_since_epoch().as_millis();
+    let stack = Stack::new(iface, device, socket_set, now, rng.random());
 
-[summer]
-MON,09:00,19:00,REGULATE
-TUE,09:00,19:00,REGULATE
-WED,09:00,19:00,REGULATE
-THU,09:00,19:00,REGULATE
-FRI,09:00,19:00,REGULATE
-SAT,09:00,19:00,REGULATE
-SUN,09:00,19:00,REGULATE
-SUN,19:01,19:02,DESCALE
+    controller
+        .set_power_saving(esp_wifi::config::PowerSaveMode::None)
+        .unwrap();
 
-[winter]
-SUN,19:01,19:02,DESCALE
+    let client_config = Configuration::Client(ClientConfiguration {
+        ssid: store.ssid().into(),
+        password: store.password().into(),
+        ..Default::default()
+    });
+    let res = controller.set_configuration(&client_config);
+    println!("wifi_set_configuration returned {:?}", res);
 
-[brightness]
-MON,00:00,09:00,10
-MON,22:00,23:59,10
-TUE,00:00,09:00,10
-TUE,22:00,23:59,10
-WED,00:00,09:00,10
-WED,22:00,23:59,10
-THU,00:00,09:00,10
-THU,22:00,23:59,10
-FRI,00:00,09:00,10
-FRI,22:00,23:59,10
-SAT,00:00,09:00,10
-SAT,22:00,23:59,10
-SUN,00:00,09:00,10
-SUN,22:00,23:59,10
+    controller.start().unwrap();
+    println!("is wifi started: {:?}", controller.is_started());
 
-[secrets]
-key=mMvvFJFTeND43qOvnL/HPyqpc5Q2cymIYNrfwxGNUkdt4nCJ6HJ93u0rm8WbKp0K+4Es9nY6vobxTM1R3Kzer1EAi+KG+mnio+Q15BAJvgzCY3bpQGFNfeRoe8A/DkkdzDCOkanTBmQgkBat+odan3MdHFgITiOlu+FOBPyfB7I=
-iv=SIlsbjf0nBsZg7GxTWeRVQ==
+    println!("Start Wifi Scan");
+    let res = controller.scan_n(10).unwrap();
+    for ap in res {
+        println!("{:?}", ap);
+    }
 
-[thermostat]
-temperature=23.5
+    println!("{:?}", controller.capabilities());
+    println!("wifi_connect {:?}", controller.connect());
 
-[time]
-ntp1=uk.pool.ntp.org
-timezone=GMT0BST,M3.5.0/1,M10.5.0/2
-"#;
-
-    let config = match config::parse_config(CONFIG_TEXT) {
-        Some(cfg) => cfg,
-        None => {
-            println!("⚠️ Failed to parse CONFIG.txt");
-            loop {}
+    // wait to get connected
+    println!("Wait to get connected");
+    loop {
+        match controller.is_connected() {
+            Ok(true) => break,
+            Ok(false) => {}
+            Err(err) => {
+                println!("{:?}", err);
+                loop {}
+            }
         }
+    }
+    println!("{:?}", controller.is_connected());
+
+    // wait for getting an ip address
+    println!("Wait to get an ip address");
+    loop {
+        stack.work();
+
+        if stack.is_iface_up() {
+            println!("got ip {:?}", stack.get_ip_info());
+            break;
+        }
+    }
+
+    println!("Start busy loop on main");
+
+    let mut rx_buffer = [0u8; 1536];
+    let mut tx_buffer = [0u8; 1536];
+    let mut socket = stack.get_socket(&mut rx_buffer, &mut tx_buffer);
+
+    let mut server = Server::new(socket);
+
+    server.start();
+
+    /* Initialise stepper */
+
+    let mut motor = {
+
+        let p1 = peripherals.GPIO0;
+        let p2 = peripherals.GPIO2;
+        let p3 = peripherals.GPIO1;
+        let p4 = peripherals.GPIO3;
+
+        Motor::new(p1, p2, p3, p4, & store)
+
     };
 
-    println!("WiFi SSID: {}", config.wifi.ssid);
-    println!("WiFi Password: {}", config.wifi.password);
-    println!("Static IP: {}", config.wifi.static_ip);
-    println!("DNS: {}", config.wifi.dns);
-    println!("Gateway: {}", config.wifi.gateway);
-    println!("Subnet: {}", config.wifi.subnet);
-
-    println!("Motor Position: {}", config.motor.position);
-    println!("Motor Max: {}", config.motor.max);
-
-    println!("Boost Short: {}", config.boost.short);
-    println!("Boost Long: {}", config.boost.long);
-
-    println!("Schedule Variant: {}", config.schedule_variant);
-
-    println!("Summer Schedule:");
-    for entry in config.summer.iter() {
-        println!("  {:?} {:02}:{:02} - {:02}:{:02} {:?}",
-                 entry.day,
-                 entry.start.hour, entry.start.minute,
-                 entry.end.hour, entry.end.minute,
-                 entry.mode
-        );
-    }
-
-    println!("Winter Schedule:");
-    for entry in config.winter.iter() {
-        println!("  {:?} {:02}:{:02} - {:02}:{:02} {:?}",
-                 entry.day,
-                 entry.start.hour, entry.start.minute,
-                 entry.end.hour, entry.end.minute,
-                 entry.mode
-        );
-    }
-
-    println!("Brightness Schedule:");
-    for entry in config.brightness.iter() {
-        println!("  {:?} {:02}:{:02} - {:02}:{:02} Level: {}",
-                 entry.day,
-                 entry.start.hour, entry.start.minute,
-                 entry.end.hour, entry.end.minute,
-                 entry.level
-        );
-    }
-
-    println!("Thermostat Temperature: {}", config.thermostat.temperature);
-
-    println!("Time Servers:");
-    for ntp in config.time.ntp_servers.iter() {
-        println!("  {}", ntp);
-    }
-
-    println!("Timezone: {}", config.time.timezone);
-
-    println!("Secrets:");
-    println!("  Key Length: {}", config.secrets.key_len);
-    println!("  IV Length: {}", config.secrets.iv_len);
-    println!("  Key (first 8): {:02X?}", &config.secrets.key[..8]);
-    println!("  IV  (first 8): {:02X?}", &config.secrets.iv[..8]);
-
     loop {
-        let delay_start = Instant::now();
-        while delay_start.elapsed() < Duration::from_millis(500) {}
+        stack.work();
+
+        if let Some(message) = server.work() {
+            match message.function {
+                Function::Test => {
+                    println!("Test function");
+                },
+                Function::CalibratePush(revolutions) => {
+                    motor.calibrate_push(revolutions);
+                },
+                Function::CalibratePull(revolutions) => {
+                    motor.calibrate_pull(revolutions);
+                },
+                Function::Unlock => {
+                    store.unlock();
+
+                },
+                Function::DebugSetPosition(pos) => {
+                    store.set_position(pos);
+                },
+                Function::DebugGetPosition => {
+                    println!("Get Pos: {}", store.position());
+                },
+            }
+        }
+
+        Delay::new().delay_millis(5);
     }
 
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-rc.0/examples/src/bin
+
+}
+
+// some smoltcp boilerplate
+fn timestamp() -> smoltcp::time::Instant {
+    smoltcp::time::Instant::from_micros(
+        esp_hal::time::Instant::now()
+            .duration_since_epoch()
+            .as_micros() as i64,
+    )
+}
+
+pub fn create_interface(device: &mut esp_wifi::wifi::WifiDevice) -> smoltcp::iface::Interface {
+    // users could create multiple instances but since they only have one WifiDevice
+    // they probably can't do anything bad with that
+    smoltcp::iface::Interface::new(
+        smoltcp::iface::Config::new(smoltcp::wire::HardwareAddress::Ethernet(
+            smoltcp::wire::EthernetAddress::from_bytes(&device.mac_address()),
+        )),
+        device,
+        timestamp(),
+    )
 }

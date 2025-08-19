@@ -23,12 +23,10 @@
 #![warn(variant_size_differences)]
 
 mod storage;
-mod server;
 mod commands;
 mod motor;
 
-use crate::commands::Function;
-use server::Server;
+use crate::commands::{Function, Message};
 use esp_hal::{
     clock::CpuClock,
     main,
@@ -56,7 +54,6 @@ use smoltcp::{
 };
 use esp_println::{print, println};
 use esp_backtrace as _;
-use blocking_network_stack::{Stack, ipv4::Ipv4Addr};
 use esp_wifi::wifi::{ClientConfiguration, Configuration};
 use serde_json::to_string;
 use motor::Motor;
@@ -87,7 +84,6 @@ fn main() -> ! {
     }
 
     /* Set up the wifi and web server */
-
     let mut rng = Rng::new(peripherals.RNG);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -97,7 +93,7 @@ fn main() -> ! {
         esp_wifi::wifi::new(&esp_wifi_ctrl, peripherals.WIFI).unwrap();
 
     let mut device = interfaces.sta;
-    let iface = create_interface(&mut device);
+    let mut iface = create_interface(&mut device);
 
     let mut socket_set_entries: [SocketStorage; 3] = Default::default();
     let mut socket_set = SocketSet::new(&mut socket_set_entries[..]);
@@ -107,10 +103,7 @@ fn main() -> ! {
         kind: 12,
         data: b"esp-wifi",
     }]);
-    socket_set.add(dhcp_socket);
-
-    let now = || Instant::now().duration_since_epoch().as_millis();
-    let stack = Stack::new(iface, device, socket_set, now, rng.random());
+    let dhcp_handle = socket_set.add(dhcp_socket);
 
     controller
         .set_power_saving(esp_wifi::config::PowerSaveMode::None)
@@ -148,28 +141,17 @@ fn main() -> ! {
             }
         }
     }
-    println!("{:?}", controller.is_connected());
+    println!("Connected? {:?}", controller.is_connected());
 
-    // wait for getting an ip address
-    println!("Wait to get an ip address");
-    loop {
-        stack.work();
+    let mut rx_storage = [0u8; 1024];
+    let mut tx_storage = [0u8; 1024];
 
-        if stack.is_iface_up() {
-            println!("got ip {:?}", stack.get_ip_info());
-            break;
-        }
-    }
+    let mut rx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut rx_storage[..]);
+    let mut tx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut tx_storage[..]);
 
-    println!("Start busy loop on main");
+    let mut tcp_socket = smoltcp::socket::tcp::Socket::new(rx_buffer, tx_buffer);
 
-    let mut rx_buffer = [0u8; 1536];
-    let mut tx_buffer = [0u8; 1536];
-    let mut socket = stack.get_socket(&mut rx_buffer, &mut tx_buffer);
-
-    let mut server = Server::new(socket);
-
-    server.start();
+    let tcp_handle = socket_set.add(tcp_socket);
 
     /* Initialise stepper */
 
@@ -184,10 +166,74 @@ fn main() -> ! {
 
     };
 
-    loop {
-        stack.work();
+    let mut message_queue = heapless::Deque::<_, 10>::new();
 
-        if let Some(message) = server.work() {
+    loop {
+
+
+        iface.poll(smoltcp::time::Instant::from_millis(Instant::now().duration_since_epoch().as_millis() as i64), &mut device, &mut socket_set);
+        let dhcp_socket = socket_set.get_mut::<smoltcp::socket::dhcpv4::Socket>(dhcp_handle);
+        if let Some(event) = dhcp_socket.poll() {
+            match event {
+                smoltcp::socket::dhcpv4::Event::Configured(config) => {
+                    iface.update_ip_addrs(|addrs| {
+                        println!("IP addr: {:?}", config.address);
+                        addrs.push(smoltcp::wire::IpCidr::Ipv4(config.address)).unwrap();
+                    });
+
+                }
+                smoltcp::socket::dhcpv4::Event::Deconfigured => {
+
+                }
+            }
+        }
+
+
+
+        let mut socket = socket_set.get_mut::<smoltcp::socket::tcp::Socket>(tcp_handle);
+
+
+        if !socket.is_open() {
+            socket.listen(8080).unwrap(); // server
+        }
+
+        if socket.can_recv() {
+            let data = socket.recv(|buf|
+                {
+                    // We'll consume everything up to `last_complete_end` (inclusive of the NUL)
+                    let mut start = 0usize;
+                    let mut last_complete_end = 0usize;
+
+                    // Scan for NULs and process each complete frame
+                    let mut i = 0usize;
+                    while i < buf.len() {
+                        if buf[i] == 0 {
+                            let frame = &buf[start..i]; // bytes before the NUL
+                            if !frame.is_empty() {
+                                if let Ok(s) = core::str::from_utf8(frame) {
+
+                                    let message = serde_json::from_str::<Message>(s).unwrap();
+
+                                    message_queue.push_back(message).unwrap();
+                                }
+                            }
+                            // Next frame starts after this NUL
+                            start = i + 1;
+                            last_complete_end = start; // we can safely consume up to here
+                        }
+                        i += 1;
+                    }
+
+                    // Consume only complete frames (leave any trailing partial bytes)
+                    (last_complete_end, ())
+
+                });
+            socket.abort();
+        }
+
+        if !message_queue.is_empty() {
+            let message = message_queue.pop_front().unwrap();
+
             match message.function {
                 Function::Test => {
                     println!("Test function");
@@ -209,7 +255,10 @@ fn main() -> ! {
                     println!("Get Pos: {}", store.position());
                 },
             }
+
+
         }
+
 
         Delay::new().delay_millis(5);
     }

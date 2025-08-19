@@ -18,7 +18,6 @@ use smoltcp::{
     wire::{DhcpOption, IpAddress},
     socket::Socket,
 };
-use blocking_network_stack::{Stack, ipv4::Ipv4Addr};
 use embedded_io::Read;
 use esp_println::println;
 use esp_hal::peripherals::WIFI;
@@ -46,14 +45,22 @@ impl<'a> Server<'a> {
     }
 
     pub fn work(& mut self) -> Option<Message> {
+
         self.socket.work();
 
+        let now = Instant::now();
+
+
         // If socket not open, start listening again
-        if !self.socket.is_open() {
+        /*if !self.socket.is_open() {
             self.socket.listen(8080).unwrap();
             self.pos = 0;
             self.deadline = None;
-        }
+        }*/
+
+        let stack_work_dur = now.elapsed();
+
+        //println!("Dur: {:?}", stack_work_dur);
 
         // If connected, handle input one tick at a time
         if self.socket.is_connected() {
@@ -75,7 +82,7 @@ impl<'a> Server<'a> {
                         let message = serde_json::from_str::<Message>(to_print).unwrap();
 
 
-                        self.socket.close();
+                        self.socket.disconnect();
                         self.pos = 0;
                         self.deadline = None;
 
@@ -88,7 +95,7 @@ impl<'a> Server<'a> {
             if let Some(d) = self.deadline {
                 if Instant::now() > d {
                     println!("Timeout");
-                    self.socket.close();
+                    self.socket.disconnect();
                     self.pos = 0;
                     self.deadline = None;
                 }

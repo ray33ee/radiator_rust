@@ -33,6 +33,7 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
   "socket-raw",
   "socket-tcp",
   "socket-udp",
+  "socket-dhcpv4",
 ] }
 atoi = { version = "2.0", default-features = false }
 itoa = { version = "1.0.15", default-features = false }
@@ -41,7 +42,6 @@ esp-println = { version = "0.15.0", features = ["esp32c3"] }
 esp-backtrace = { version = "0.17.0", features = ["esp32c3", "println", "panic-handler"] }
 embedded-sdmmc = "0.9.0"
 embedded-hal-bus = "0.3.0"
-blocking-network-stack = { git = "https://github.com/bjoernQ/blocking-network-stack.git", rev = "b3ecefc2", default-features = false, features = ["dhcpv4", "tcp"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = {version = "1.0.219", default-features = false, features = ["derive"]}
 embedded-stepper = "0.1.2"

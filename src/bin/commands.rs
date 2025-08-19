@@ -4,14 +4,30 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum Function {
-    Test,
-    CalibratePush(u32),
-    CalibratePull(u32),
-    Unlock,
     DebugSetPosition(u32),
     DebugGetPosition,
     DebugOpen,
     DebugClose,
+
+    Unlock,
+    GetLock,
+    GetPosition,
+    CalibratePush(u32),
+    CalibratePull(u32),
+    Zero,
+    GetMax,
+    SetMax(u32),
+    GetThermostat,
+    SetThermostat(f32),
+    ReadTemperature,
+    GetMacAddress,
+    GetResetReason,
+    SoftReset,
+    SyncTime,
+
+
+
+
 }
 
 #[derive(Debug, Serialize, Deserialize)]

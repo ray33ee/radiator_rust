@@ -62,7 +62,7 @@ def encode_function_call(call: str) -> bytes:
         payload = {"function": {name: args}}              # multi-field tuple -> list
 
     json_text = json.dumps(payload, separators=(",", ":"))
-    return (json_text + "\0").encode("utf-8")
+    return (json_text).encode("utf-8")
 
 
 def encode_message(call: str) -> bytes:

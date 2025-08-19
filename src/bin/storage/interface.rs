@@ -84,6 +84,10 @@ impl<'a> SdInterface<'a> {
         self.config.motor.max
     }
 
+    pub(crate) fn thermostat(&self) -> f32 {
+        self.config.thermostat.temperature
+    }
+
     pub(crate) fn lock(& self) {
         let partition = self.vm.open_volume(VolumeIdx(0)).expect("Could not open volume");
 

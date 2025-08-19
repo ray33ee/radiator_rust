@@ -59,6 +59,8 @@ use esp_wifi::wifi::{ClientConfiguration, Configuration};
 use serde_json::to_string;
 use motor::Motor;
 use crate::thermo::Thermometer;
+use core::fmt::Write;
+use core::ptr::read_volatile;
 /*#[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
@@ -78,6 +80,8 @@ fn main() -> ! {
 
     /* Set ip dht22 */
     let mut thermo = Thermometer::new(peripherals.GPIO9);
+
+    thermo.get_temperature();
 
     /* Set up the sd storage interface */
     let store = storage::SdInterface::new(peripherals.SPI2, peripherals.GPIO4, peripherals.GPIO6, peripherals.GPIO5, peripherals.GPIO7);
@@ -169,9 +173,12 @@ fn main() -> ! {
 
     };
 
-    let mut message_queue = heapless::Deque::<_, 10>::new();
+    //let mut message = heapless::Deque::<_, 10>::new();
 
-    let mut end = false;
+
+    let mut must_close = false;
+
+    let mut st = heapless::String::<1000>::new();
 
     loop {
 
@@ -203,69 +210,103 @@ fn main() -> ! {
             socket.listen(8080).unwrap(); // server
         }
 
-        if end {
+        if must_close {
             socket.close();
-            end = false;
+            must_close = false;
         }
+
 
         if socket.can_recv() {
             socket.recv(|buf| {
-                if let Some(first_nul) = buf.iter().position(|&b| b == 0) {
-                    let frame = &buf[..first_nul]; // bytes before the first NUL
-                    if !frame.is_empty() {
-                        if let Ok(s) = core::str::from_utf8(frame) {
-                            if let Ok(message) = serde_json::from_str::<Message>(s) {
-                                let _ = message_queue.push_back(message);
-                            }
+                if let Ok(s) = core::str::from_utf8(buf) {
+                    if let Ok(message) = serde_json::from_str::<Message>(s) {
+                        match message.function {
+                            Function::CalibratePush(revolutions) => {
+                                motor.calibrate_push(revolutions);
+                                write!(& mut st, "Pushed {} revolutions", revolutions);
+                            },
+                            Function::CalibratePull(revolutions) => {
+                                motor.calibrate_pull(revolutions);
+                                write!(& mut st, "Pulled {} revolutions", revolutions);
+                            },
+                            Function::Unlock => {
+                                if store.is_locked() {
+                                    store.unlock();
+                                    write!(& mut st, "Lock unlocked");
+                                } else {
+                                    write!(& mut st, "Already unlocked");
+                                }
+                            },
+                            Function::DebugSetPosition(pos) => {
+                                store.set_position(pos);
+                                write!(& mut st, "Position set at {}", pos);
+                            },
+                            Function::DebugGetPosition => {
+                                write!(& mut st, "Position is at: {}", store.position());
+                            },
+                            Function::DebugOpen => {
+                                motor.open_valve();
+                                write!(& mut st, "Valve opened");
+                            },
+                            Function::DebugClose => {
+                                motor.close_valve();
+                                write!(& mut st, "Valve closed");
+                            },
+                            Function::GetLock => {
+                                write!(& mut st, "Lock is {}", if store.is_locked() { "locked" } else { "unlocked" });
+                            },
+                            Function::GetPosition => {
+                                write!(& mut st, "Position is at: {}", store.position());
+                            },
+                            Function::Zero => {
+                                store.set_position(0);
+                                write!(& mut st, "Position set to 0");
+                            },
+                            Function::GetMax => {
+                                write!(& mut st, "Max position is at: {}", store.max_position());
+                            },
+                            Function::SetMax(value) => {
+                                write!(& mut st, "Not Implemented");
+                            },
+                            Function::GetThermostat => {
+                                write!(& mut st, "Thermostat value is {}°C", store.thermostat());
+                            },
+                            Function::SetThermostat(temperature) => {
+                                write!(& mut st, "Not Implemented");
+                            },
+                            Function::ReadTemperature => {
+                                write!(& mut st, "Temperature is {}°C", thermo.get_temperature());
+                            },
+                            Function::GetMacAddress => {
+                                write!(& mut st, "Not Implemented");
+                            },
+                            Function::SoftReset => {
+                                esp_hal::rom::software_reset();
+                            },
+                            Function::SyncTime => {
+                                write!(& mut st, "Not Implemented");
+                            },
+                            Function::GetResetReason => {
+                                write!(& mut st, "Reset reason: {}", esp_hal::rom::rtc_get_reset_reason(0));
+                            },
+
+
                         }
+                        must_close = true;
                     }
-                    // Consume up to and including that first NUL. Anything after stays in the buffer.
-                    (first_nul + 1, ())
-                } else {
-                    // No complete message yet; keep all bytes.
-                    (0, ())
                 }
+
+                // Consume up to and including that first NUL. Anything after stays in the buffer.
+                (buf.len(), ())
 
             }).unwrap();
 
         }
 
-        if !message_queue.is_empty() {
-            let message = message_queue.pop_front().unwrap();
-
-            match message.function {
-                Function::Test => {
-                    println!("Test function");
-                    socket.send_slice(b"hello\0").unwrap();
-                    end = true;
-                },
-                Function::CalibratePush(revolutions) => {
-                    motor.calibrate_push(revolutions);
-                },
-                Function::CalibratePull(revolutions) => {
-                    motor.calibrate_pull(revolutions);
-                },
-                Function::Unlock => {
-                    store.unlock();
-
-                },
-                Function::DebugSetPosition(pos) => {
-                    store.set_position(pos);
-                },
-                Function::DebugGetPosition => {
-                    println!("Get Pos: {}", store.position());
-                },
-                Function::DebugOpen => {
-                    motor.open_valve();
-                },
-                Function::DebugClose => {
-                    motor.close_valve();
-                },
-            }
-
-
+        if must_close {
+            socket.send_slice(st.as_bytes()).unwrap();
+            st.clear();
         }
-
 
         Delay::new().delay_millis(5);
     }

@@ -14,18 +14,14 @@ def send_message(message):
         sock.sendall(encode_message(message))
 
         # Manually collect bytes until null
-        response = bytearray()
+        data = bytearray()
         while True:
-            try:
-                chunk = sock.recv(1)
-                if not chunk or chunk == b'\0':
-                    break
-                response += chunk
-            except socket.timeout:
-                print("Timed out waiting for response.")
-                return
+            chunk = sock.recv(4096)
+            if not chunk:  # no more data
+                break
+            data.extend(chunk)
 
-        return response.decode(errors="replace")
+        return data.decode(errors="replace")
 
 
 class DeviceGUI:
@@ -75,7 +71,22 @@ class DeviceGUI:
         ]
 
         functions = [
-            ("Test", "Test")
+            ("Unlock", "Unlock"),
+            ("Get lock", "GetLock"),
+            ("Get position", "GetPosition"),
+            ("Calibrate push", "CalibratePush", int),
+            ("Calibrate pull", "CalibratePull", int),
+            ("Zero", "Zero"),
+            ("Get max", "GetMax"),
+            ("Set max", "SetMax", int),
+            ("Get thermostat", "GetThermostat"),
+            ("Set thermostat", "SetThermostat", float),
+            ("Read temperature", "ReadTemperature"),
+            ("Get MAC address", "GetMacAddress"),
+            ("Get reset reason", "GetResetReason"),
+            ("Soft reset", "SoftReset"),
+            ("Sync time", "SyncTime"),
+            ("Test", "Test"),
         ]
 
         # Create a button for each function

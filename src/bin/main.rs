@@ -25,6 +25,7 @@
 mod storage;
 mod commands;
 mod motor;
+mod thermo;
 
 use crate::commands::{Function, Message};
 use esp_hal::{
@@ -57,8 +58,7 @@ use esp_backtrace as _;
 use esp_wifi::wifi::{ClientConfiguration, Configuration};
 use serde_json::to_string;
 use motor::Motor;
-
-
+use crate::thermo::Thermometer;
 /*#[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
@@ -76,15 +76,18 @@ fn main() -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
+    /* Set ip dht22 */
+    let mut thermo = Thermometer::new(peripherals.GPIO9);
+
     /* Set up the sd storage interface */
-    let mut store = storage::SdInterface::new(peripherals.SPI2, peripherals.GPIO4, peripherals.GPIO6, peripherals.GPIO5, peripherals.GPIO7);
+    let store = storage::SdInterface::new(peripherals.SPI2, peripherals.GPIO4, peripherals.GPIO6, peripherals.GPIO5, peripherals.GPIO7);
 
     if store.is_locked() {
         println!("Motor is locked!");
     }
 
     /* Set up the wifi and web server */
-    let mut rng = Rng::new(peripherals.RNG);
+    let rng = Rng::new(peripherals.RNG);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let esp_wifi_ctrl = esp_wifi::init(timg0.timer0, rng.clone()).unwrap();
@@ -146,10 +149,10 @@ fn main() -> ! {
     let mut rx_storage = [0u8; 1024];
     let mut tx_storage = [0u8; 1024];
 
-    let mut rx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut rx_storage[..]);
-    let mut tx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut tx_storage[..]);
+    let rx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut rx_storage[..]);
+    let tx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut tx_storage[..]);
 
-    let mut tcp_socket = smoltcp::socket::tcp::Socket::new(rx_buffer, tx_buffer);
+    let tcp_socket = smoltcp::socket::tcp::Socket::new(rx_buffer, tx_buffer);
 
     let tcp_handle = socket_set.add(tcp_socket);
 
@@ -167,6 +170,8 @@ fn main() -> ! {
     };
 
     let mut message_queue = heapless::Deque::<_, 10>::new();
+
+    let mut end = false;
 
     loop {
 
@@ -190,45 +195,39 @@ fn main() -> ! {
 
 
 
-        let mut socket = socket_set.get_mut::<smoltcp::socket::tcp::Socket>(tcp_handle);
+        let socket = socket_set.get_mut::<smoltcp::socket::tcp::Socket>(tcp_handle);
+
 
 
         if !socket.is_open() {
             socket.listen(8080).unwrap(); // server
         }
 
+        if end {
+            socket.close();
+            end = false;
+        }
+
         if socket.can_recv() {
-            let data = socket.recv(|buf|
-                {
-                    // We'll consume everything up to `last_complete_end` (inclusive of the NUL)
-                    let mut start = 0usize;
-                    let mut last_complete_end = 0usize;
-
-                    // Scan for NULs and process each complete frame
-                    let mut i = 0usize;
-                    while i < buf.len() {
-                        if buf[i] == 0 {
-                            let frame = &buf[start..i]; // bytes before the NUL
-                            if !frame.is_empty() {
-                                if let Ok(s) = core::str::from_utf8(frame) {
-
-                                    let message = serde_json::from_str::<Message>(s).unwrap();
-
-                                    message_queue.push_back(message).unwrap();
-                                }
+            socket.recv(|buf| {
+                if let Some(first_nul) = buf.iter().position(|&b| b == 0) {
+                    let frame = &buf[..first_nul]; // bytes before the first NUL
+                    if !frame.is_empty() {
+                        if let Ok(s) = core::str::from_utf8(frame) {
+                            if let Ok(message) = serde_json::from_str::<Message>(s) {
+                                let _ = message_queue.push_back(message);
                             }
-                            // Next frame starts after this NUL
-                            start = i + 1;
-                            last_complete_end = start; // we can safely consume up to here
                         }
-                        i += 1;
                     }
+                    // Consume up to and including that first NUL. Anything after stays in the buffer.
+                    (first_nul + 1, ())
+                } else {
+                    // No complete message yet; keep all bytes.
+                    (0, ())
+                }
 
-                    // Consume only complete frames (leave any trailing partial bytes)
-                    (last_complete_end, ())
+            }).unwrap();
 
-                });
-            socket.abort();
         }
 
         if !message_queue.is_empty() {
@@ -237,6 +236,8 @@ fn main() -> ! {
             match message.function {
                 Function::Test => {
                     println!("Test function");
+                    socket.send_slice(b"hello\0").unwrap();
+                    end = true;
                 },
                 Function::CalibratePush(revolutions) => {
                     motor.calibrate_push(revolutions);
@@ -253,6 +254,12 @@ fn main() -> ! {
                 },
                 Function::DebugGetPosition => {
                     println!("Get Pos: {}", store.position());
+                },
+                Function::DebugOpen => {
+                    motor.open_valve();
+                },
+                Function::DebugClose => {
+                    motor.close_valve();
                 },
             }
 

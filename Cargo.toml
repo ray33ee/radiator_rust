@@ -45,6 +45,7 @@ embedded-hal-bus = "0.3.0"
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = {version = "1.0.219", default-features = false, features = ["derive"]}
 embedded-stepper = "0.1.2"
+dht22-sensor = { version = "0.1.0" }
 
 [profile.dev]
 # Rust debug is too slow.

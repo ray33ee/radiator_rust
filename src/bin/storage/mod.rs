@@ -1,4 +1,4 @@
 mod interface;
 mod config;
 
-pub use interface::SdInterface;
+pub(crate) use interface::SdInterface;

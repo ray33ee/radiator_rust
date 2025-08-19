@@ -21,7 +21,7 @@ impl TimeSource for NullTimeSource {
     }
 }
 
-pub struct SdInterface<'a>
+pub(crate) struct SdInterface<'a>
 where
 {
     vm: VolumeManager<SdCard<ExclusiveDevice<Spi<'a, esp_hal::Blocking>, Output<'a>, Delay>, Delay>, NullTimeSource>,
@@ -29,7 +29,7 @@ where
 }
 
 impl<'a> SdInterface<'a> {
-    pub fn new<SCK: OutputPin + 'a, MOSI: OutputPin + 'a, MISO: InputPin + 'a, CS: OutputPin + 'a, SPI: esp_hal::spi::master::Instance + 'a>(
+    pub(crate) fn new<SCK: OutputPin + 'a, MOSI: OutputPin + 'a, MISO: InputPin + 'a, CS: OutputPin + 'a, SPI: esp_hal::spi::master::Instance + 'a>(
         spi2: SPI,
         sck: SCK,
         mosi: MOSI,
@@ -72,15 +72,19 @@ impl<'a> SdInterface<'a> {
         }
     }
 
-    pub fn ssid(&self) -> &str {
+    pub(crate) fn ssid(&self) -> &str {
         self.config.wifi.ssid.as_str()
     }
 
-    pub fn password(&self) -> &str {
+    pub(crate) fn password(&self) -> &str {
         self.config.wifi.password.as_str()
     }
 
-    pub fn lock(& self) {
+    pub(crate) fn max_position(&self) -> u32 {
+        self.config.motor.max
+    }
+
+    pub(crate) fn lock(& self) {
         let partition = self.vm.open_volume(VolumeIdx(0)).expect("Could not open volume");
 
         let root = partition.open_root_dir().expect("Could not open root directory");
@@ -90,7 +94,7 @@ impl<'a> SdInterface<'a> {
 
     }
 
-    pub fn unlock(& self) {
+    pub(crate) fn unlock(& self) {
 
         let partition = self.vm.open_volume(VolumeIdx(0)).expect("Could not open volume");
 
@@ -100,7 +104,7 @@ impl<'a> SdInterface<'a> {
 
     }
 
-    pub fn is_locked(& self) -> bool {
+    pub(crate) fn is_locked(& self) -> bool {
         let partition = self.vm.open_volume(VolumeIdx(0)).expect("Could not open volume");
 
         let root = partition.open_root_dir().expect("Could not open root directory");
@@ -108,7 +112,7 @@ impl<'a> SdInterface<'a> {
         root.find_directory_entry(LOCK_NAME).is_ok()
     }
 
-    pub fn position(& self) -> u32 {
+    pub(crate) fn position(& self) -> u32 {
         let partition = self.vm.open_volume(VolumeIdx(0)).expect("Could not open volume");
 
         let root = partition.open_root_dir().expect("Could not open root directory");
@@ -126,7 +130,7 @@ impl<'a> SdInterface<'a> {
         i
     }
 
-    pub fn set_position(& self, position: u32) {
+    pub(crate) fn set_position(& self, position: u32) {
         let partition = self.vm.open_volume(VolumeIdx(0)).expect("Could not open volume");
 
         let root = partition.open_root_dir().expect("Could not open root directory");

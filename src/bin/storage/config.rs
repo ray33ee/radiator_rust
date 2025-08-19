@@ -21,7 +21,7 @@ pub(super) struct WifiConfig {
 
 #[derive(Clone, Debug)]
 pub(super) struct MotorConfig {
-    pub(super) max: i32,
+    pub(super) max: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -137,9 +137,6 @@ impl Config {
         atoi::atoi::<u32>(s.as_bytes())
     }
 
-    fn parse_i32(s: &str) -> Option<i32> {
-        atoi::atoi::<i32>(s.as_bytes())
-    }
 
     fn parse_f32(s: &str) -> Option<f32> {
         let mut int_part = 0f32;
@@ -203,7 +200,7 @@ impl Config {
         base64::engine::general_purpose::STANDARD.decode_slice(input.as_bytes(), output).unwrap_or_else(|_| 0)
     }
 
-    pub fn parse_config(input: &[u8]) -> Config {
+    pub(super) fn parse_config(input: &[u8]) -> Config {
         let mut config = Config {
             wifi: WifiConfig {
                 ssid: String::new(),
@@ -267,7 +264,7 @@ impl Config {
                     if let Some((k, v)) = line.split_once('=') {
                         match k.trim() {
                             "max" => {
-                                if let Some(n) = Self::parse_i32(v.trim()) {
+                                if let Some(n) = Self::parse_u32(v.trim()) {
                                     config.motor.max = n;
                                 }
                             }

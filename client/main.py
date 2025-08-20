@@ -85,8 +85,9 @@ class DeviceGUI:
             ("Get MAC address", "GetMacAddress"),
             ("Get reset reason", "GetResetReason"),
             ("Soft reset", "SoftReset"),
-            ("Sync time", "SyncTime"),
-            ("Test", "Test"),
+            ("Sync time", "SyncTime", int),
+            ("Get time", "GetTime"),
+            ("Get time api", "DebugTimeAPI"),
         ]
 
         # Create a button for each function

@@ -1,4 +1,4 @@
-use embedded_sdmmc::{SdCard, VolumeIdx, VolumeManager, TimeSource, Timestamp, Mode, Error, DirEntry};
+use embedded_sdmmc::{SdCard, VolumeIdx, VolumeManager, TimeSource, Timestamp, Mode};
 use esp_hal::{
     gpio::{OutputPin, Output, OutputConfig, Level},
     spi::master::{Spi, Config},
@@ -6,7 +6,6 @@ use esp_hal::{
 };
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::gpio::InputPin;
-use embedded_io::Write;
 
 const CONFIG_NAME: & 'static str = "CONFIG.txt";
 const LOCK_NAME: & 'static str = "LOCK";
@@ -139,7 +138,7 @@ impl<'a> SdInterface<'a> {
 
         let root = partition.open_root_dir().expect("Could not open root directory");
 
-        let mut pos = root.open_file_in_dir(POSITION_NAME, Mode::ReadWriteTruncate).expect("Could not open position file");
+        let pos = root.open_file_in_dir(POSITION_NAME, Mode::ReadWriteTruncate).expect("Could not open position file");
 
         let mut itoa = itoa::Buffer::new();
         let s = itoa.format(position);

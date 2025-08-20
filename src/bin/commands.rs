@@ -1,5 +1,4 @@
 
-use heapless::{String, Vec};
 use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -8,6 +7,7 @@ pub(crate) enum Function {
     DebugGetPosition,
     DebugOpen,
     DebugClose,
+    DebugTimeAPI,
 
     Unlock,
     GetLock,
@@ -23,7 +23,8 @@ pub(crate) enum Function {
     GetMacAddress,
     GetResetReason,
     SoftReset,
-    SyncTime,
+    SyncTime(i64),
+    GetTime,
 
 
 

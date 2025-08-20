@@ -2,19 +2,17 @@
 use esp_hal::gpio::OutputPin;
 use dht22_sensor::Dht22;
 use esp_hal::{
-    clock::CpuClock,
     delay::Delay,
     gpio::{DriveMode, Output, OutputConfig, Pull, Flex},
-    main,
 };
 
-pub struct Thermometer<'a> {
+pub(crate) struct Thermometer<'a> {
     sensor: Dht22<Flex<'a>, Delay>,
     last_read: Option<f32>,
 }
 
 impl<'a> Thermometer<'a> {
-    pub fn new<W: OutputPin + 'a>(one_wire: W) -> Self {
+    pub(crate) fn new<W: OutputPin + 'a>(one_wire: W) -> Self {
         //Setup the pin as input/output
         let od_config = OutputConfig::default()
             .with_drive_mode(DriveMode::OpenDrain)
@@ -38,7 +36,7 @@ impl<'a> Thermometer<'a> {
 
     }
 
-    pub fn get_temperature(&mut self) -> f32 {
+    pub(crate) fn get_temperature(&mut self) -> f32 {
         if let Ok(reading) = self.sensor.read() {
             self.last_read = Some(reading.temperature);
         }

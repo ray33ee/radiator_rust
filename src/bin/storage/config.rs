@@ -1,8 +1,8 @@
-#![no_std]
 
 use heapless::{String, Vec};
 use core::str::FromStr;
 use core::option::Option;
+use time::Weekday;
 
 const KEY_LENGTH: usize = 128;
 const IV_LENGTH: usize = 16;
@@ -49,11 +49,6 @@ pub(super) enum Mode {
     Unknown,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Day {
-    Mon, Tue, Wed, Thu, Fri, Sat, Sun, Invalid,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Time {
     pub(super) hour: u8,
@@ -62,7 +57,7 @@ pub(super) struct Time {
 
 #[derive(Clone, Debug)]
 pub(super) struct ScheduleEntry {
-    pub(super) day: Day,
+    pub(super) day: Weekday,
     pub(super) start: Time,
     pub(super) end: Time,
     pub(super) mode: Mode,
@@ -70,7 +65,7 @@ pub(super) struct ScheduleEntry {
 
 #[derive(Clone, Debug)]
 pub(super) struct BrightnessEntry {
-    pub(super) day: Day,
+    pub(super) day: Weekday,
     pub(super) start: Time,
     pub(super) end: Time,
     pub(super) level: u8,
@@ -100,16 +95,16 @@ impl Config {
 
 
 
-    fn parse_day(s: &str) -> Day {
+    fn parse_day(s: &str) -> Weekday {
         match s {
-            "MON" => Day::Mon,
-            "TUE" => Day::Tue,
-            "WED" => Day::Wed,
-            "THU" => Day::Thu,
-            "FRI" => Day::Fri,
-            "SAT" => Day::Sat,
-            "SUN" => Day::Sun,
-            _ => Day::Invalid,
+            "MON" => Weekday::Monday,
+            "TUE" => Weekday::Tuesday,
+            "WED" => Weekday::Wednesday,
+            "THU" => Weekday::Thursday,
+            "FRI" => Weekday::Friday,
+            "SAT" => Weekday::Saturday,
+            "SUN" => Weekday::Sunday,
+            _ => panic!("Invalid weekday: {}", s),
         }
     }
 

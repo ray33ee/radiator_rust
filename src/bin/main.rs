@@ -26,6 +26,8 @@ mod storage;
 mod commands;
 mod motor;
 mod thermo;
+mod rtc;
+mod network;
 
 use crate::commands::{Function, Message};
 use esp_hal::{
@@ -35,32 +37,27 @@ use esp_hal::{
     delay::Delay,
     rng::Rng,
     time::Instant,
-    gpio::{
-        Output,
-        Level,
-        OutputConfig,
-    },
 };
 use smoltcp::{
     iface::{
         SocketStorage,
         SocketSet,
-        Interface,
     },
     wire::{
         DhcpOption,
-        IpAddress
     },
-    socket::Socket,
 };
-use esp_println::{print, println};
+use esp_println::println;
 use esp_backtrace as _;
 use esp_wifi::wifi::{ClientConfiguration, Configuration};
-use serde_json::to_string;
 use motor::Motor;
 use crate::thermo::Thermometer;
 use core::fmt::Write;
-use core::ptr::read_volatile;
+use core::ops::Deref;
+use crate::network::Network;
+use crate::rtc::RTC;
+
+
 /*#[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
@@ -83,6 +80,9 @@ fn main() -> ! {
 
     thermo.get_temperature();
 
+    /* Set up RTC counter and NTP */
+    let mut rtc = RTC::new();
+
     /* Set up the sd storage interface */
     let store = storage::SdInterface::new(peripherals.SPI2, peripherals.GPIO4, peripherals.GPIO6, peripherals.GPIO5, peripherals.GPIO7);
 
@@ -102,7 +102,7 @@ fn main() -> ! {
     let mut device = interfaces.sta;
     let mut iface = create_interface(&mut device);
 
-    let mut socket_set_entries: [SocketStorage; 3] = Default::default();
+    let mut socket_set_entries: [SocketStorage<'_>; 4] = Default::default();
     let mut socket_set = SocketSet::new(&mut socket_set_entries[..]);
     let mut dhcp_socket = smoltcp::socket::dhcpv4::Socket::new();
     // we can set a hostname here (or add other DHCP options)
@@ -150,15 +150,27 @@ fn main() -> ! {
     }
     println!("Connected? {:?}", controller.is_connected());
 
-    let mut rx_storage = [0u8; 1024];
-    let mut tx_storage = [0u8; 1024];
+    let mut server_rx_storage = [0u8; 1024];
+    let mut server_tx_storage = [0u8; 1024];
 
-    let rx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut rx_storage[..]);
-    let tx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut tx_storage[..]);
+    let server_rx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut server_rx_storage[..]);
+    let server_tx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut server_tx_storage[..]);
 
-    let tcp_socket = smoltcp::socket::tcp::Socket::new(rx_buffer, tx_buffer);
+    let server_socket = smoltcp::socket::tcp::Socket::new(server_rx_buffer, server_tx_buffer);
 
-    let tcp_handle = socket_set.add(tcp_socket);
+    let server_handle = socket_set.add(server_socket);
+
+    let mut time_rx_storage = [0u8; 3024];
+    let mut time_tx_storage = [0u8; 3024];
+
+    let time_rx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut time_rx_storage[..]);
+    let time_tx_buffer = smoltcp::storage::RingBuffer::<u8>::new::<&mut [u8]>(&mut time_tx_storage[..]);
+
+    let time_socket = smoltcp::socket::tcp::Socket::new(time_rx_buffer, time_tx_buffer);
+
+    let time_handle = socket_set.add(time_socket);
+
+
 
     /* Initialise stepper */
 
@@ -180,133 +192,123 @@ fn main() -> ! {
 
     let mut st = heapless::String::<1000>::new();
 
+    let get_time = false;
+
+    let mut nal = Network::new(rng.clone());
+
     loop {
 
 
-        iface.poll(smoltcp::time::Instant::from_millis(Instant::now().duration_since_epoch().as_millis() as i64), &mut device, &mut socket_set);
-        let dhcp_socket = socket_set.get_mut::<smoltcp::socket::dhcpv4::Socket>(dhcp_handle);
-        if let Some(event) = dhcp_socket.poll() {
-            match event {
-                smoltcp::socket::dhcpv4::Event::Configured(config) => {
-                    iface.update_ip_addrs(|addrs| {
-                        println!("IP addr: {:?}", config.address);
-                        addrs.push(smoltcp::wire::IpCidr::Ipv4(config.address)).unwrap();
-                    });
-
-                }
-                smoltcp::socket::dhcpv4::Event::Deconfigured => {
-
-                }
-            }
-        }
+        iface.poll(smoltcp::time::Instant::from_micros(Instant::now().duration_since_epoch().as_micros() as i64), &mut device, &mut socket_set);
 
 
 
-        let socket = socket_set.get_mut::<smoltcp::socket::tcp::Socket>(tcp_handle);
+        let mut do_thing = false;
 
+        nal.update(& mut iface, & mut socket_set, server_handle,time_handle, dhcp_handle, |message| {
 
-
-        if !socket.is_open() {
-            socket.listen(8080).unwrap(); // server
-        }
-
-        if must_close {
-            socket.close();
-            must_close = false;
-        }
-
-
-        if socket.can_recv() {
-            socket.recv(|buf| {
-                if let Ok(s) = core::str::from_utf8(buf) {
-                    if let Ok(message) = serde_json::from_str::<Message>(s) {
-                        match message.function {
-                            Function::CalibratePush(revolutions) => {
-                                motor.calibrate_push(revolutions);
-                                write!(& mut st, "Pushed {} revolutions", revolutions);
-                            },
-                            Function::CalibratePull(revolutions) => {
-                                motor.calibrate_pull(revolutions);
-                                write!(& mut st, "Pulled {} revolutions", revolutions);
-                            },
-                            Function::Unlock => {
-                                if store.is_locked() {
-                                    store.unlock();
-                                    write!(& mut st, "Lock unlocked");
-                                } else {
-                                    write!(& mut st, "Already unlocked");
-                                }
-                            },
-                            Function::DebugSetPosition(pos) => {
-                                store.set_position(pos);
-                                write!(& mut st, "Position set at {}", pos);
-                            },
-                            Function::DebugGetPosition => {
-                                write!(& mut st, "Position is at: {}", store.position());
-                            },
-                            Function::DebugOpen => {
-                                motor.open_valve();
-                                write!(& mut st, "Valve opened");
-                            },
-                            Function::DebugClose => {
-                                motor.close_valve();
-                                write!(& mut st, "Valve closed");
-                            },
-                            Function::GetLock => {
-                                write!(& mut st, "Lock is {}", if store.is_locked() { "locked" } else { "unlocked" });
-                            },
-                            Function::GetPosition => {
-                                write!(& mut st, "Position is at: {}", store.position());
-                            },
-                            Function::Zero => {
-                                store.set_position(0);
-                                write!(& mut st, "Position set to 0");
-                            },
-                            Function::GetMax => {
-                                write!(& mut st, "Max position is at: {}", store.max_position());
-                            },
-                            Function::SetMax(value) => {
-                                write!(& mut st, "Not Implemented");
-                            },
-                            Function::GetThermostat => {
-                                write!(& mut st, "Thermostat value is {}°C", store.thermostat());
-                            },
-                            Function::SetThermostat(temperature) => {
-                                write!(& mut st, "Not Implemented");
-                            },
-                            Function::ReadTemperature => {
-                                write!(& mut st, "Temperature is {}°C", thermo.get_temperature());
-                            },
-                            Function::GetMacAddress => {
-                                write!(& mut st, "Not Implemented");
-                            },
-                            Function::SoftReset => {
-                                esp_hal::rom::software_reset();
-                            },
-                            Function::SyncTime => {
-                                write!(& mut st, "Not Implemented");
-                            },
-                            Function::GetResetReason => {
-                                write!(& mut st, "Reset reason: {}", esp_hal::rom::rtc_get_reset_reason(0));
-                            },
-
-
-                        }
-                        must_close = true;
-                    }
-                }
-
-                // Consume up to and including that first NUL. Anything after stays in the buffer.
-                (buf.len(), ())
-
-            }).unwrap();
-
-        }
-
-        if must_close {
-            socket.send_slice(st.as_bytes()).unwrap();
             st.clear();
+
+            match message.function {
+                Function::CalibratePush(revolutions) => {
+                    motor.calibrate_push(revolutions);
+                    write!(&mut st, "Pushed {} revolutions", revolutions).unwrap();
+                },
+                Function::CalibratePull(revolutions) => {
+                    motor.calibrate_pull(revolutions);
+                    write!(&mut st, "Pulled {} revolutions", revolutions).unwrap();
+                },
+                Function::Unlock => {
+                    if store.is_locked() {
+                        store.unlock();
+                        write!(&mut st, "Lock unlocked").unwrap();
+                    } else {
+                        write!(&mut st, "Already unlocked").unwrap();
+                    }
+                },
+                Function::DebugSetPosition(pos) => {
+                    store.set_position(pos);
+                    write!(&mut st, "Position set at {}", pos).unwrap();
+                },
+                Function::DebugGetPosition => {
+                    write!(&mut st, "Position is at: {}", store.position()).unwrap();
+                },
+                Function::DebugOpen => {
+                    motor.open_valve();
+                    write!(&mut st, "Valve opened").unwrap();
+                },
+                Function::DebugClose => {
+                    motor.close_valve();
+                    write!(&mut st, "Valve closed").unwrap();
+                },
+                Function::GetLock => {
+                    write!(&mut st, "Lock is {}", if store.is_locked() { "locked" } else { "unlocked" }).unwrap();
+                },
+                Function::GetPosition => {
+                    write!(&mut st, "Position is at: {}", store.position()).unwrap();
+                },
+                Function::Zero => {
+                    store.set_position(0);
+                    write!(&mut st, "Position set to 0").unwrap();
+                },
+                Function::GetMax => {
+                    write!(&mut st, "Max position is at: {}", store.max_position()).unwrap();
+                },
+                Function::SetMax(value) => {
+                    motor.set_max_position(value);
+                    write!(&mut st, "Set max position to {}", value).unwrap();
+                },
+                Function::GetThermostat => {
+                    write!(&mut st, "Thermostat value is {}°C", store.thermostat()).unwrap();
+                },
+                Function::SetThermostat(_) => {
+                    write!(&mut st, "Not Implemented").unwrap();
+                },
+                Function::ReadTemperature => {
+                    write!(&mut st, "Temperature is {}°C", thermo.get_temperature()).unwrap();
+                },
+                Function::GetMacAddress => {
+                    write!(&mut st, "Not Implemented").unwrap();
+                },
+                Function::SoftReset => {
+                    esp_hal::rom::software_reset();
+                },
+                Function::SyncTime(epoch) => {
+                    rtc.update_epoch(epoch);
+                    write!(&mut st, "Time updated").unwrap();
+                },
+                Function::GetResetReason => {
+                    write!(&mut st, "Reset reason: {}", esp_hal::rom::rtc_get_reset_reason(0)).unwrap();
+                },
+                Function::GetTime => {
+                    if let Some(date_time) = rtc.date_time() {
+                        write!(&mut st, "Time is {:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                               date_time.year(),
+                               date_time.month() as u32,
+                               date_time.day(),
+                               date_time.hour(),
+                               date_time.minute(),
+                               date_time.second(),
+                        ).unwrap();
+                    } else {
+                        write!(&mut st, "Could not get time - rtc not synced").unwrap();
+                    }
+                },
+                Function::DebugTimeAPI => {
+                    do_thing = true;
+                    write!(&mut st, "Trying to get time api").unwrap();
+                },
+            }
+
+            st.deref()
+        });
+
+        if do_thing {
+            println!("Do thing");
+            nal.try_time_api();
+            do_thing = false;
         }
+
 
         Delay::new().delay_millis(5);
     }
@@ -323,9 +325,7 @@ fn timestamp() -> smoltcp::time::Instant {
     )
 }
 
-pub fn create_interface(device: &mut esp_wifi::wifi::WifiDevice) -> smoltcp::iface::Interface {
-    // users could create multiple instances but since they only have one WifiDevice
-    // they probably can't do anything bad with that
+pub fn create_interface(device: &mut esp_wifi::wifi::WifiDevice<'_>) -> smoltcp::iface::Interface {
     smoltcp::iface::Interface::new(
         smoltcp::iface::Config::new(smoltcp::wire::HardwareAddress::Ethernet(
             smoltcp::wire::EthernetAddress::from_bytes(&device.mac_address()),

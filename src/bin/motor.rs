@@ -2,7 +2,7 @@ use embedded_stepper::{create_stepper_4pin, Stepper4};
 use esp_hal::delay::Delay;
 use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::gpio::OutputPin;
-use crate::storage::SdInterface;
+use crate::storages::SdInterface;
 
 
 const SPEED: u32 = 625;

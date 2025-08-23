@@ -17,6 +17,7 @@ def send_message(message):
         data = bytearray()
         while True:
             chunk = sock.recv(4096)
+            print(chunk)
             if not chunk:  # no more data
                 break
             data.extend(chunk)

@@ -9,6 +9,7 @@ pub(crate) enum Function {
     DebugClose,
     DebugTimeAPI,
 
+
     Unlock,
     GetLock,
     GetPosition,

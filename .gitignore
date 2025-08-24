@@ -23,3 +23,5 @@ Cargo.lock
 # Schematics
 schematics/front/production
 schematics/front/front-backups
+schematics/dev_board/production
+schematics/dev_board/dev_board-backups

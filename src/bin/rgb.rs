@@ -11,7 +11,8 @@ pub(crate) enum State {
     Off,
     Rainbow(u32),
     Solid(Color),
-    Fade(Color, u32),
+    Fade(Color, u32), //Color, fade duration
+    OneFlash( Color,  u32,  u32), //Color, ont time, off time
     CrossFade{from: Color, to: Color, duration: u32},
 
 }
@@ -22,6 +23,7 @@ struct Unit {
     to: Color,
     duration: u32,
 }
+
 
 impl Unit {
     const fn new(r1: u8, g1: u8, b1: u8, r2: u8, g2: u8, b2: u8, duration: u32) -> Self {
@@ -48,12 +50,12 @@ impl Unit {
         Self::new(r, g, b, 0, 0, 0, duration)
     }
 
-    const fn solid(r: u8, g: u8, b: u8) -> Self {
-        Self::new(r, g, b, r, g, b, 2)
+    const fn solid(r: u8, g: u8, b: u8, duration: u32) -> Self {
+        Self::new(r, g, b, r, g, b, duration)
     }
 
-    const fn off() -> Self {
-        Self::new(0, 0, 0, 0, 0, 0, 2)
+    const fn off(duration: u32) -> Self {
+        Self::new(0, 0, 0, 0, 0, 0, duration)
     }
 
     fn interpolate(&self, x: u32) -> Color {
@@ -96,7 +98,7 @@ impl RGBLED {
 
         match new_state {
             State::Off => {
-                self.units.push(Unit::off()).unwrap();
+                self.units.push(Unit::off(2)).unwrap();
             }
             State::Rainbow(duration) => {
                 self.units.push(Unit::new(255, 0, 0, 0, 255, 0, duration / 3)).unwrap();
@@ -104,15 +106,19 @@ impl RGBLED {
                 self.units.push(Unit::new(0, 0, 255, 255, 0, 0, duration / 3)).unwrap();
             }
             State::Solid(color) => {
-                self.units.push(Unit::solid(color.r, color.g, color.b)).unwrap();
+                self.units.push(Unit::solid(color.r, color.g, color.b, 2)).unwrap();
             }
             State::Fade(color, duration) => {
-                self.units.push(Unit::new(0, 0, 0, color.r, color.g, color.b, duration / 2)).unwrap();
-                self.units.push(Unit::new(color.r, color.g, color.b, 0, 0, 0, duration / 2)).unwrap();
+                self.units.push(Unit::up_fade(color.r, color.g, color.b, duration / 2)).unwrap();
+                self.units.push(Unit::down_fade(color.r, color.g, color.b, duration / 2)).unwrap();
             }
             State::CrossFade { from, to, duration } => {
                 self.units.push(Unit::new(from.r, from.g, from.b, to.r, to.g, to.b, duration / 2)).unwrap();
                 self.units.push(Unit::new(to.r, to.g, to.b, from.r, from.g, from.b, duration / 2)).unwrap();
+            }
+            State::OneFlash(from, on_time, off_time) => {
+                self.units.push(Unit::solid(from.r, from.g, from.b, on_time)).unwrap();
+                self.units.push(Unit::off(off_time)).unwrap();
             }
         }
 

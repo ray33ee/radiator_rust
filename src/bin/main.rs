@@ -31,6 +31,7 @@ mod rtc;
 mod network;
 mod rgb;
 
+use crate::rgb::State as RGBState;
 use esp_hal::ledc::LSGlobalClkSource;
 use esp_hal::ledc::Ledc;
 use esp_hal::gpio::OutputConfig;
@@ -61,6 +62,7 @@ use embassy_executor::Spawner;
 use crate::rtc::RTC;
 use embassy_sync::channel::Channel;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 use smoltcp::wire::IpEndpoint;
 use esp_hal::ledc::timer::TimerIFace;
 use esp_hal::ledc::channel::ChannelIFace;
@@ -80,14 +82,17 @@ async fn net_task(mut runner: embassy_net::Runner<'static, WifiDevice<'static>>)
 
 
 #[embassy_executor::task]
-async fn world_time_task(stack: Stack<'static>, time: & 'static Channel<NoopRawMutex, (), 1>,) -> ! {
+async fn world_time_task(
+    stack: Stack<'static>,
+    //time: & 'static Channel<NoopRawMutex, (), 1>,
+    time_mutex: & 'static Mutex<NoopRawMutex, RTC>,
+
+) -> ! {
 
     let mut rx_buf = [0u8; 2024];
     let mut tx_buf = [0u8; 2024];
 
     loop {
-
-        time.receive().await;
 
         let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
 
@@ -97,13 +102,15 @@ async fn world_time_task(stack: Stack<'static>, time: & 'static Channel<NoopRawM
 
         socket.connect(time_endpoint).await.unwrap();
 
+        println!("Connected to time api...");
+
         socket.write(b"GET /api/ip HTTP/1.1\r\n\
 Host: worldtimeapi.org\r\n\
 User-Agent: esp32-rust\r\n\
 Connection: close\r\n\
 \r\n").await.unwrap();
 
-        let _ = socket.read_with(|bytes| {
+        let result_got_time = socket.read_with(|bytes| {
 
             if let Some(body_begin) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
                 if let Some(body_end) = &bytes[body_begin+4..].iter().position(|&b| b == b'}') {
@@ -115,17 +122,43 @@ Connection: close\r\n\
 
                     println!("datetime_string {}", datetime_string.unwrap());
 
+
+                    return (bytes.len(), Some(RTC::epoch_from_iso(datetime_string.unwrap())));
+
+
                 }
             }
 
 
-            (bytes.len(), ())
+            (bytes.len(), None)
 
         }).await;
 
+        if let Ok(got_time) = result_got_time {
+            if let Some(epoch) = got_time {
+                let mut guard = time_mutex.lock().await;
+
+                guard.update_epoch(epoch);
+
+
+                socket.close();
+
+                //Put this thread to sleep when the time is found
+                break;
+            }
+        }
+
+        println!("Time not found");
 
         socket.close();
 
+        Timer::after(Duration::from_secs(3)).await;
+
+    }
+
+    //If the time has been acquired, put the thread to sleep
+    loop {
+        Timer::after(Duration::from_secs(1)).await;
     }
 }
 
@@ -210,12 +243,14 @@ async fn led_task(
     led_state: & 'static Channel<NoopRawMutex, crate::rgb::State, 1>,
     red_channel: esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>,
     green_channel: esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>,
-    blue_channel: esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>) -> ! {
+    blue_channel: esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>,
+    initial_state: RGBState,
+) -> ! {
 
 
     let mut rgb_led = RGBLED::new();
 
-    rgb_led.set_state(crate::rgb::State::Rainbow(3000));
+    rgb_led.set_state(initial_state);
 
     loop {
 
@@ -252,13 +287,13 @@ async fn main(spawner: Spawner) {
     /* Setup LED pins */
 
     let red = Output::new(peripherals.GPIO10, Level::High, OutputConfig::default());
-    let green = Output::new(peripherals.GPIO20, Level::High, OutputConfig::default());
-    let blue = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
+    let green = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
+    let blue = Output::new(peripherals.GPIO20, Level::High, OutputConfig::default());
 
     let mut myledc = Ledc::new(peripherals.LEDC);
     myledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
-    static LSTIMER1: StaticCell<esp_hal::ledc::timer::Timer<esp_hal::ledc::LowSpeed>> = StaticCell::new();
+    static LSTIMER1: StaticCell<esp_hal::ledc::timer::Timer<'_, esp_hal::ledc::LowSpeed>> = StaticCell::new();
     let lstimer1 = LSTIMER1.init(
         {
             let mut t = myledc.timer::<esp_hal::ledc::LowSpeed>(esp_hal::ledc::timer::Number::Timer1);
@@ -292,19 +327,20 @@ async fn main(spawner: Spawner) {
         pin_config: esp_hal::ledc::channel::config::PinConfig::PushPull,
     }).unwrap();
 
+    red_channel.set_duty(100).unwrap();
+    green_channel.set_duty(0).unwrap();
+    blue_channel.set_duty(0).unwrap();
+
 
     static LED_CHNL: StaticCell<Channel<NoopRawMutex, crate::rgb::State, 1>> = StaticCell::new();
     let led_channel: & 'static mut Channel<NoopRawMutex, crate::rgb::State, 1>  = LED_CHNL.init(Channel::new());
 
-    spawner.spawn(led_task(led_channel, red_channel, blue_channel, green_channel)).unwrap();
+    spawner.spawn(led_task(led_channel, red_channel, blue_channel, green_channel, RGBState::OneFlash(Color { r: 0, g: 255, b:255 }, 100, 100))).unwrap();
 
     /* Set ip dht22 */
     let mut thermo = Thermometer::new(peripherals.GPIO9);
 
     thermo.get_temperature();
-
-    /* Set up RTC counter and NTP */
-    let mut rtc = RTC::new();
 
     /* Set up the sd storage interface */
     let store = storages::SdInterface::new(peripherals.SPI2, peripherals.GPIO4, peripherals.GPIO6, peripherals.GPIO5, peripherals.GPIO7);
@@ -314,6 +350,9 @@ async fn main(spawner: Spawner) {
     }
 
     /* Set up the wifi and web server */
+
+    led_channel.send(RGBState::OneFlash(Color { r: 0, g: 255, b: 255 }, 50, 50)).await;
+
     let rng = Rng::new(peripherals.RNG);
 
     let timer0 = SystemTimer::new(peripherals.SYSTIMER);
@@ -359,13 +398,16 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net_task(runner)).unwrap();
 
 
-    //Todo: add a timeout to this code so it doesn't block the code
+    //Todo: add a timeout to this code so it doesn't block the code.
+    //Using embassy select
     stack.wait_config_up().await;
+
 
     let ip = stack.config_v4().unwrap().address;
     println!("network up. IPv4: {}", ip);
 
 
+    led_channel.send(RGBState::OneFlash(Color { r: 255, g: 0, b: 50 }, 50, 50)).await;
 
     static MSG_CHNL: StaticCell<Channel<NoopRawMutex, Message, 1>> = StaticCell::new();
     let message_channel: & 'static mut Channel<NoopRawMutex, Message, 1>  = MSG_CHNL.init(Channel::new());
@@ -375,8 +417,28 @@ async fn main(spawner: Spawner) {
     static RET_CHNL: StaticCell<Channel<NoopRawMutex, String, 1>> = StaticCell::new();
     let return_channel: & 'static mut Channel<NoopRawMutex, String, 1>  = RET_CHNL.init(Channel::new());
 
-    static TIME_CHNL: StaticCell<Channel<NoopRawMutex, (), 1>> = StaticCell::new();
-    let time_channel: & 'static mut Channel<NoopRawMutex, (), 1>  = TIME_CHNL.init(Channel::new());
+    /* Get internet time */
+    static TIME_MUTEX: StaticCell<Mutex<NoopRawMutex, RTC>> = StaticCell::new();
+    let time_mutex: & 'static mut Mutex<NoopRawMutex, RTC>  = TIME_MUTEX.init(Mutex::new(RTC::new()));
+
+    spawner.spawn(world_time_task(stack, time_mutex)).unwrap();
+
+    led_channel.send(RGBState::OneFlash(Color { r: 255, g: 0, b: 255 }, 200, 200)).await;
+
+    //Block the main thread until the internet time is resolved
+    loop {
+
+        {
+            let guard = time_mutex.lock().await;
+
+            if guard.date_time().is_some() {
+                break;
+            }
+        }
+
+        Timer::after(Duration::from_millis(100)).await;
+
+    }
 
 
     /* Initialise stepper */
@@ -394,9 +456,11 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(server_task(stack, message_channel, return_channel)).unwrap();
 
-    spawner.spawn(world_time_task(stack, time_channel)).unwrap();
+    led_channel.send(RGBState::Solid(Color { r: 0, g: 255, b: 0 })).await;
 
-    led_channel.send(crate::rgb::State::Fade(crate::rgb::Color { r: 255, g: 255, b: 0 }, 1000)).await;
+    Timer::after(Duration::from_millis(500)).await;
+
+    led_channel.send(RGBState::Rainbow(6000)).await;
 
     loop {
 
@@ -470,14 +534,20 @@ async fn main(spawner: Spawner) {
                         esp_hal::rom::software_reset();
                     },
                     Function::SyncTime(epoch) => {
-                        rtc.update_epoch(epoch);
+                        let mut guard = time_mutex.lock().await;
+
+                        guard.update_epoch(epoch);
+
                         format!("Time updated")
                     },
                     Function::GetResetReason => {
                         format!("Reset reason: {}", esp_hal::rom::rtc_get_reset_reason(0))
                     },
                     Function::GetTime => {
-                        if let Some(date_time) = rtc.date_time() {
+
+                        let guard = time_mutex.lock().await;
+
+                        if let Some(date_time) = guard.date_time() {
                             format!("Time is {:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
                                    date_time.year(),
                                    date_time.month() as u32,
@@ -489,10 +559,6 @@ async fn main(spawner: Spawner) {
                         } else {
                             format!("Could not get time - rtc not synced")
                         }
-                    },
-                    Function::DebugTimeAPI => {
-                        time_channel.send(()).await;
-                        format!("Trying to get time api")
                     },
                 };
 

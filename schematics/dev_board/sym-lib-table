@@ -1,0 +1,5 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "8836")(type "KiCad")(uri "${KIPRJMOD}/8836.kicad_sym")(options "")(descr ""))
+  (lib (name "sensor")(type "KiCad")(uri "${KIPRJMOD}/sensor.kicad_sym")(options "")(descr ""))
+)

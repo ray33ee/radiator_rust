@@ -3,6 +3,8 @@ use heapless::{String, Vec};
 use core::str::FromStr;
 use core::option::Option;
 use time::Weekday;
+use time::OffsetDateTime;
+use crate::fsm;
 
 const KEY_LENGTH: usize = 128;
 const IV_LENGTH: usize = 16;
@@ -40,7 +42,7 @@ pub(super) struct TimeConfig {
     pub(super) ntp_servers: Vec<Str, 3>,
     pub(super) timezone: Str,
 }
-
+/*
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Mode {
     Off,
@@ -48,33 +50,60 @@ pub(super) enum Mode {
     Descale,
     Unknown,
 }
-
-#[derive(Clone, Copy, Debug)]
-pub(super) struct Time {
-    pub(super) hour: u8,
-    pub(super) minute: u8,
-}
+*/
 
 #[derive(Clone, Debug)]
 pub(super) struct ScheduleEntry {
     pub(super) day: Weekday,
-    pub(super) start: Time,
-    pub(super) end: Time,
-    pub(super) mode: Mode,
+    pub(super) start: u16,
+    pub(super) end: u16,
+    pub(super) mode: crate::fsm::State,
+}
+
+impl ScheduleEntry {
+
+    fn is_in(&self, current_time: OffsetDateTime) -> bool {
+        if current_time.weekday() == self.day {
+            let current_minutes = current_time.hour() as u16 * 60 + current_time.minute() as u16;
+            if current_minutes > self.start && current_minutes < self.end {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct BrightnessEntry {
     pub(super) day: Weekday,
-    pub(super) start: Time,
-    pub(super) end: Time,
+    pub(super) start: u16,
+    pub(super) end: u16,
     pub(super) level: u8,
+}
+
+impl BrightnessEntry {
+
+    fn is_in(&self, current_time: OffsetDateTime) -> bool {
+        if current_time.weekday() == self.day {
+            let current_minutes = current_time.hour() as u16 * 60 + current_time.minute() as u16;
+            if current_minutes > self.start && current_minutes < self.end {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct Secrets {
     pub(super) key: Vec<u8, KEY_LENGTH>,
     pub(super) iv: Vec<u8, IV_LENGTH>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum Variant {
+    Summer,
+    Winter,
 }
 
 #[derive(Clone, Debug)]
@@ -85,15 +114,13 @@ pub(super) struct Config {
     pub(super) thermostat: Thermostat,
     pub(super) time: TimeConfig,
     pub(super) secrets: Secrets,
-    pub(super) schedule_variant: Str,
+    pub(super) schedule_variant: Variant,
     pub(super) summer: Vec<ScheduleEntry, 32>,
     pub(super) winter: Vec<ScheduleEntry, 32>,
     pub(super) brightness: Vec<BrightnessEntry, 32>,
 }
 
 impl Config {
-
-
 
     fn parse_day(s: &str) -> Weekday {
         match s {
@@ -108,21 +135,22 @@ impl Config {
         }
     }
 
-    fn parse_mode(s: &str) -> Mode {
+    fn parse_mode(s: &str) -> crate::fsm::State {
         match s {
-            "OFF" => Mode::Off,
-            "REGULATE" => Mode::Regulate,
-            "DESCALE" => Mode::Descale,
-            _ => Mode::Unknown,
+            "OFF" => crate::fsm::State::Off,
+            "REGULATE" => crate::fsm::State::Regulate,
+            "DESCALE" => crate::fsm::State::Descale,
+            "RESET" => crate::fsm::State::Reset,
+            _ => panic!("Invalid state: {}", s),
         }
     }
 
-    fn parse_time(s: &str) -> Option<Time> {
+    fn parse_time(s: &str) -> Option<u16> {
         let mut parts = s.split(':');
         let hour = parts.next()?.parse::<u8>().ok()?;
         let minute = parts.next()?.parse::<u8>().ok()?;
         if hour <= 24 && minute < 60 {
-            Some(Time { hour, minute })
+            Some(hour as u16 * 60 + minute as u16)
         } else {
             None
         }
@@ -195,6 +223,14 @@ impl Config {
         base64::engine::general_purpose::STANDARD.decode_slice(input.as_bytes(), output).unwrap_or_else(|_| 0)
     }
 
+    fn parse_variant(input: &str) -> Variant {
+        match input {
+            "summer" => Variant::Summer,
+            "winter" => Variant::Winter,
+            _ => panic!("Unknown variant: {}", input),
+        }
+    }
+
     pub(super) fn parse_config(input: &[u8]) -> Config {
         let mut config = Config {
             wifi: WifiConfig {
@@ -216,7 +252,7 @@ impl Config {
                 key: Vec::new(),
                 iv: Vec::new(),
             },
-            schedule_variant: String::new(),
+            schedule_variant: Variant::Summer,
             summer: Vec::new(),
             winter: Vec::new(),
             brightness: Vec::new(),
@@ -287,7 +323,7 @@ impl Config {
                 Some("schedule") => {
                     if let Some((k, v)) = line.split_once('=') {
                         if k.trim() == "variant" {
-                            config.schedule_variant = Str::from_str(v.trim()).unwrap_or_default();
+                            config.schedule_variant = Self::parse_variant(v.trim());
                         }
                     }
                 }
@@ -351,5 +387,24 @@ impl Config {
         }
 
         config
+    }
+
+
+    pub(super) fn get_state(&self, current_time: OffsetDateTime) -> fsm::State {
+        let schedule = {
+            match self.schedule_variant {
+                Variant::Summer => { &self.summer }
+                Variant::Winter => { &self.winter }
+            }
+        };
+
+        for slot in schedule {
+            if slot.is_in(current_time) {
+                return slot.mode;
+            }
+        }
+
+        //If there is no schedule entry then the default is Off
+        fsm::State::Off
     }
 }

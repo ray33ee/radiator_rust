@@ -14,6 +14,7 @@ pub(crate) enum State {
     Fade(Color, u32), //Color, fade duration
     OneFlash( Color,  u32,  u32), //Color, ont time, off time
     CrossFade{from: Color, to: Color, duration: u32},
+    FadeFlash{color: Color, fade_duration: u32, pause: u32, flash_count: u32, on_duration: u32, off_duration: u32, final_pause: u32},
 
 }
 
@@ -119,6 +120,19 @@ impl RGBLED {
             State::OneFlash(from, on_time, off_time) => {
                 self.units.push(Unit::solid(from.r, from.g, from.b, on_time)).unwrap();
                 self.units.push(Unit::off(off_time)).unwrap();
+            }
+            State::FadeFlash { color, fade_duration, pause, flash_count, on_duration, off_duration, final_pause } => {
+                self.units.push(Unit::up_fade(color.r, color.g, color.b, fade_duration / 2)).unwrap();
+                self.units.push(Unit::down_fade(color.r, color.g, color.b, fade_duration / 2)).unwrap();
+                self.units.push(Unit::off(pause)).unwrap();
+
+                for _ in 0..flash_count {
+                    self.units.push(Unit::solid(color.r, color.g, color.b, on_duration)).unwrap();
+                    self.units.push(Unit::off(off_duration)).unwrap();
+                }
+
+                self.units.push(Unit::off(final_pause)).unwrap();
+
             }
         }
 

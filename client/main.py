@@ -88,7 +88,10 @@ class DeviceGUI:
             ("Soft reset", "SoftReset"),
             ("Sync time", "SyncTime", int),
             ("Get time", "GetTime"),
-            ("Get time api", "DebugTimeAPI"),
+            ("Enter Descale", "Descale"),
+            ("Enter Calibrate", "Calibrate"),
+            ("Enter Safe Mode", "SafeMode"),
+            ("Cancel", "Cancel"),
         ]
 
         # Create a button for each function

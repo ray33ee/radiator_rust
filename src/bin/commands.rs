@@ -3,11 +3,6 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum Function {
-    DebugSetPosition(u32),
-    DebugGetPosition,
-    DebugOpen,
-    DebugClose,
-
 
     Unlock,
     GetLock,
@@ -26,6 +21,12 @@ pub(crate) enum Function {
     SyncTime(i64),
     GetTime,
 
+    Calibrate,
+    SafeMode,
+    Descale,
+    Cancel,
+    ShortBoost,
+    LongBoost,
 
 
 

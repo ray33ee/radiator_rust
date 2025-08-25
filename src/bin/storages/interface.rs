@@ -6,6 +6,9 @@ use esp_hal::{
 };
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::gpio::InputPin;
+use time::OffsetDateTime;
+use crate::fsm;
+use crate::storages::config::Variant;
 
 const CONFIG_NAME: & 'static str = "CONFIG.txt";
 const LOCK_NAME: & 'static str = "LOCK";
@@ -148,6 +151,22 @@ impl<'a> SdInterface<'a> {
         pos.flush().expect("Could not flush position file");
 
         pos.close().expect("Could not close position file");
+    }
+
+    pub(crate) fn set_summer(& mut self) {
+        self.config.schedule_variant = Variant::Summer;
+
+        //Todo: save the new variant state
+    }
+
+    pub(crate) fn set_winter(& mut self) {
+        self.config.schedule_variant = Variant::Winter;
+
+        //Todo: save the new variant state
+    }
+
+    pub(crate) fn current_schedule_state(&self, current_time: OffsetDateTime) -> fsm::State {
+        self.config.get_state(current_time)
     }
 
 }

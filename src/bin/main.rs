@@ -30,11 +30,14 @@ mod thermo;
 mod rtc;
 mod network;
 mod rgb;
+mod fsm;
+mod mode_button;
 
+use crate::fsm::FSM;
 use crate::rgb::State as RGBState;
 use esp_hal::ledc::LSGlobalClkSource;
 use esp_hal::ledc::Ledc;
-use esp_hal::gpio::OutputConfig;
+use esp_hal::gpio::{InputConfig, OutputConfig, Pull};
 use esp_hal::gpio::Level;
 use esp_hal::gpio::Output;
 use alloc::format;
@@ -96,11 +99,13 @@ async fn world_time_task(
 
         let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
 
-        let time_api_addr = stack.dns_query("worldtimeapi.org", smoltcp::wire::DnsQueryType::A).await.unwrap()[0];
+        let world_time_api_dns = "192.168.1.111";
 
-        let time_endpoint = IpEndpoint::new(time_api_addr, 80);
+        let time_api_addr = stack.dns_query(world_time_api_dns, smoltcp::wire::DnsQueryType::A).await.unwrap()[0];
 
-        socket.connect(time_endpoint).await.unwrap();
+        let time_endpoint = IpEndpoint::new(time_api_addr, 8080);
+
+        socket.connect(time_endpoint).await.expect(format!("Could not connect to world time api: {}", world_time_api_dns).as_str());
 
         println!("Connected to time api...");
 
@@ -166,7 +171,7 @@ Connection: close\r\n\
 ///
 /// Server takes clients, reads the message, sends a response then closes the connection
 ///
-/// The message is sent to the main loop, the function is exeuted, and the return string is
+/// The message is sent to the main loop, the function is executed, and the return string is
 /// sent back to this thread to send to the client.
 ///
 #[embassy_executor::task]
@@ -256,7 +261,6 @@ async fn led_task(
 
 
         if let Ok(state) = led_state.try_receive() {
-            println!("Received state");
             rgb_led.set_state(state);
         }
 
@@ -337,6 +341,12 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(led_task(led_channel, red_channel, blue_channel, green_channel, RGBState::OneFlash(Color { r: 0, g: 255, b:255 }, 100, 100))).unwrap();
 
+    /* Set up button */
+
+    let button_pin = esp_hal::gpio::Input::new(peripherals.GPIO8, InputConfig::default().with_pull(Pull::Up));
+
+    let mut mode_button = crate::mode_button::Mode::new(button_pin);
+
     /* Set ip dht22 */
     let mut thermo = Thermometer::new(peripherals.GPIO9);
 
@@ -345,9 +355,6 @@ async fn main(spawner: Spawner) {
     /* Set up the sd storage interface */
     let store = storages::SdInterface::new(peripherals.SPI2, peripherals.GPIO4, peripherals.GPIO6, peripherals.GPIO5, peripherals.GPIO7);
 
-    if store.is_locked() {
-        println!("Motor is locked!");
-    }
 
     /* Set up the wifi and web server */
 
@@ -460,10 +467,16 @@ async fn main(spawner: Spawner) {
 
     Timer::after(Duration::from_millis(500)).await;
 
-    led_channel.send(RGBState::Rainbow(6000)).await;
+    let mut fsm = FSM::new(& store);
+
+
+    if store.is_locked() {
+
+        fsm.force_change(fsm::State::Calibrate);
+
+    }
 
     loop {
-
 
 
         match message_channel.try_receive() {
@@ -471,35 +484,32 @@ async fn main(spawner: Spawner) {
                 println!("Loop message");
                 let return_string = match message.function {
                     Function::CalibratePush(revolutions) => {
-                        motor.calibrate_push(revolutions);
-                        format!("Pushed {} revolutions", revolutions)
-                    },
-                    Function::CalibratePull(revolutions) => {
-                        motor.calibrate_pull(revolutions);
-                        format!("Pulled {} revolutions", revolutions)
-                    },
-                    Function::Unlock => {
-                        if store.is_locked() {
-                            store.unlock();
-                            format!("Lock unlocked")
+                        if fsm.state().is_calibrate() {
+                            motor.calibrate_push(revolutions);
+                            format!("Pushed {} revolutions", revolutions)
                         } else {
-                            format!("Already unlocked")
+                            format!("Device must be in calibrate mode for calibrate push to work")
                         }
                     },
-                    Function::DebugSetPosition(pos) => {
-                        store.set_position(pos);
-                        format!("Position set at {}", pos)
+                    Function::CalibratePull(revolutions) => {
+                        if fsm.state().is_calibrate() {
+                            motor.calibrate_pull(revolutions);
+                            format!("Pulled {} revolutions", revolutions)
+                        } else {
+                            format!("Device must be in calibrate mode for calibrate pull to work")
+                        }
                     },
-                    Function::DebugGetPosition => {
-                        format!("Position is at: {}", store.position())
-                    },
-                    Function::DebugOpen => {
-                        motor.open_valve();
-                        format!("Valve opened")
-                    },
-                    Function::DebugClose => {
-                        motor.close_valve();
-                        format!("Valve closed")
+                    Function::Unlock => {
+                        if fsm.state().is_calibrate() {
+                            if store.is_locked() {
+                                store.unlock();
+                                format!("Lock unlocked")
+                            } else {
+                                format!("Already unlocked")
+                            }
+                        } else {
+                            format!("Device must be in calibrate mode for unlock to work")
+                        }
                     },
                     Function::GetLock => {
                         format!("Lock is {}", if store.is_locked() { "locked" } else { "unlocked" })
@@ -508,15 +518,23 @@ async fn main(spawner: Spawner) {
                         format!("Position is at: {}", store.position())
                     },
                     Function::Zero => {
-                        store.set_position(0);
-                        format!("Position set to 0")
+                        if fsm.state().is_calibrate() {
+                            store.set_position(0);
+                            format!("Position set to 0")
+                        } else {
+                            format!("Device must be in calibrate mode for zero to work")
+                        }
                     },
                     Function::GetMax => {
                         format!("Max position is at: {}", store.max_position())
                     },
                     Function::SetMax(value) => {
-                        motor.set_max_position(value);
-                        format!("Set max position to {}", value)
+                        if fsm.state().is_calibrate() {
+                            motor.set_max_position(value);
+                            format!("Set max position to {}", value)
+                        } else {
+                            format!("Device must be in calibrate mode for set max to work")
+                        }
                     },
                     Function::GetThermostat => {
                         format!("Thermostat value is {}°C", store.thermostat())
@@ -560,12 +578,302 @@ async fn main(spawner: Spawner) {
                             format!("Could not get time - rtc not synced")
                         }
                     },
+                    Function::Descale => {
+                        fsm.request_change(fsm::State::Descale);
+                        format!("Requesting descale - NOTE: this might not work if the device is in safe, calibrate or warning mode")
+                    },
+                    Function::Calibrate => {
+                        fsm.request_change(fsm::State::Calibrate);
+                        format!("Requesting descale - NOTE: this might not work if the device is in safe, calibrate or warning mode")
+                    },
+                    Function::SafeMode => {
+                        fsm.request_change(fsm::State::SafeMode);
+                        format!("Requesting descale - NOTE: this might not work if the device is in safe, calibrate or warning mode")
+                    },
+                    Function::Cancel => {
+                        fsm.request_change(fsm::State::Cancel);
+                        format!("Cancelling mode (does nothing unless in warning, descale or boost mode)")
+                    },
+                    Function::ShortBoost => {
+                        //todo: replace literal with store.short_duration
+                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(600)));
+                        format!("Starting short boost")
+                    },
+                    Function::LongBoost => {
+                        //todo: replace literal with store.long_duration
+                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(1800)));
+                        format!("Starting long boost")
+                    },
+
                 };
 
                 return_channel.send(return_string).await;
             },
             Err(_) => {
 
+            }
+        }
+
+
+        mode_button.update();
+
+        if let Some(action) = mode_button.released_action() {
+
+            match action {
+                mode_button::Action::End => {}
+                mode_button::Action::Nothing => {}
+                mode_button::Action::ShortBoost => {
+                    //todo: replace literal with store.short_duration
+                    fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(600)));
+                }
+                mode_button::Action::LongBoost => {
+                    //todo: replace literal with store.long_duration
+                    fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(1800)));
+                }
+                mode_button::Action::Cancel => {
+                    fsm.request_change(fsm::State::Cancel);
+                }
+                mode_button::Action::Calibrate => {
+                    fsm.request_change(fsm::State::Calibrate);
+                }
+                mode_button::Action::Safe => {
+                    fsm.request_change(fsm::State::SafeMode);
+                }
+                mode_button::Action::Reset => {
+                    esp_hal::rom::software_reset();
+                }
+                mode_button::Action::Retract => {
+                    motor.calibrate_pull(7);
+                }
+                mode_button::Action::ZeroUnlock => {
+                    store.set_position(0);
+                    if store.is_locked() {
+                        store.unlock();
+                    }
+                }
+            }
+        }
+
+        if mode_button.mode_just_changed() {
+
+            if let Some(action) = mode_button.current_action() {
+                led_channel.send(RGBState::Solid(action.color())).await;
+            } else {
+                led_channel.send(RGBState::Off).await;
+            }
+        }
+
+        if !mode_button.is_pressed() {
+            let state_just_changed = fsm.just_changed();
+
+            let current_time = {
+                let guard = time_mutex.lock().await;
+
+                guard.date_time().unwrap()
+            };
+
+            match fsm.state() {
+                crate::fsm::State::Empty => {}
+                crate::fsm::State::Start => {
+                    fsm.change_from_schedule(current_time);
+
+                    fsm.allow_request();
+                }
+                crate::fsm::State::Regulate => {
+
+                    if state_just_changed || mode_button.just_released() {
+                        led_channel.send(RGBState::Fade(Color { r: 255, g: 30, b: 0 }, 3000)).await;
+
+                        Timer::after(Duration::from_millis(100)).await;
+
+                    }
+
+                    if state_just_changed {
+
+                        mode_button.clear_actions();
+                        mode_button.push_action(mode_button::Action::ShortBoost);
+                        mode_button.push_action(mode_button::Action::LongBoost);
+                        mode_button.push_action(mode_button::Action::Calibrate);
+                        mode_button.push_action(mode_button::Action::Safe);
+                        mode_button.push_action(mode_button::Action::Reset);
+
+                    }
+
+                    let actual = thermo.get_temperature();
+                    let thermostat = store.thermostat();
+
+                    if actual < (thermostat - 0.25) {
+                        motor.open_valve();
+                    }
+
+                    if actual > (thermostat + 0.25) {
+                        motor.close_valve();
+                    }
+
+                    fsm.change_from_schedule(current_time);
+
+                    fsm.allow_request();
+                }
+                crate::fsm::State::Off => {
+
+                    if state_just_changed || mode_button.just_released() {
+                        led_channel.send(RGBState::Fade(Color { r: 0, g: 10, b: 255 }, 5000)).await;
+
+                        Timer::after(Duration::from_millis(100)).await; //Give the led thread time
+
+                    }
+
+                    if state_just_changed {
+
+                        motor.close_valve();
+
+                        mode_button.clear_actions();
+                        mode_button.push_action(mode_button::Action::ShortBoost);
+                        mode_button.push_action(mode_button::Action::LongBoost);
+                        mode_button.push_action(mode_button::Action::Calibrate);
+                        mode_button.push_action(mode_button::Action::Safe);
+                        mode_button.push_action(mode_button::Action::Reset);
+                    }
+
+                    fsm.change_from_schedule(current_time);
+
+                    fsm.allow_request();
+                }
+                crate::fsm::State::Boost(time_started, duration) => {
+
+                    if state_just_changed || mode_button.just_released() {
+                        led_channel.send(RGBState::Fade(Color { r: 255, g: 10, b: 0 }, 400)).await;
+
+                        Timer::after(Duration::from_millis(100)).await; //Give the led thread time
+
+                    }
+
+                    if state_just_changed {
+
+                        motor.open_valve();
+
+
+                        mode_button.clear_actions();
+                        mode_button.push_action(mode_button::Action::Cancel);
+                        mode_button.push_action(mode_button::Action::Calibrate);
+                        mode_button.push_action(mode_button::Action::Safe);
+                        mode_button.push_action(mode_button::Action::Reset);
+                    }
+
+                    if time_started.elapsed() > *duration {
+                        fsm.request_change(fsm::State::Start);
+                    }
+
+                    fsm.allow_request();
+                }
+                crate::fsm::State::Calibrate => {
+
+                    if state_just_changed || mode_button.just_released() {
+                        led_channel.send(RGBState::Fade(Color { r: 255, g: 150, b: 0 }, 400)).await;
+
+                        Timer::after(Duration::from_millis(100)).await; //Give the led thread time
+
+                    }
+
+                    if state_just_changed {
+
+                        mode_button.clear_actions();
+                        mode_button.push_action(mode_button::Action::Retract);
+                        mode_button.push_action(mode_button::Action::ZeroUnlock);
+                        mode_button.push_action(mode_button::Action::Safe);
+                        mode_button.push_action(mode_button::Action::Reset);
+                    }
+
+                    //FSM may only leave calibrate mode for warnings
+                    fsm.handle_request(|state| state.is_warning());
+                }
+                crate::fsm::State::SafeMode => {
+
+                    if state_just_changed || mode_button.just_released() {
+                        led_channel.send(RGBState::Fade(Color { r: 255, g: 255, b: 255 }, 3000)).await;
+
+                        Timer::after(Duration::from_millis(100)).await; //Give the led thread time
+
+                    }
+
+                    if state_just_changed {
+
+                        motor.open_valve();
+
+
+                        mode_button.clear_actions();
+                        mode_button.push_action(mode_button::Action::Reset);
+                    }
+
+
+                    //FSM may only leave safe mode for warnings
+                    fsm.handle_request(|state| state.is_warning());
+                }
+                crate::fsm::State::Reset => {
+                    esp_hal::rom::software_reset();
+                }
+                crate::fsm::State::Descale => {
+
+                    if state_just_changed || mode_button.just_released() {
+
+                        led_channel.send(RGBState::CrossFade { from: Color { r: 0, g: 255, b: 0 }, to: Color { r: 255, g: 255, b: 0 }, duration: 5000 }).await;
+
+                        Timer::after(Duration::from_millis(100)).await; //Give the led thread time
+
+                    }
+
+                    if state_just_changed {
+                        //Whatever position the valve is in, open and close it
+                        motor.close_valve();
+                        motor.open_valve();
+                        motor.close_valve();
+
+
+                        mode_button.clear_actions();
+                        mode_button.push_action(mode_button::Action::Cancel);
+                        mode_button.push_action(mode_button::Action::ShortBoost);
+                        mode_button.push_action(mode_button::Action::LongBoost);
+                        mode_button.push_action(mode_button::Action::Calibrate);
+                        mode_button.push_action(mode_button::Action::Safe);
+                        mode_button.push_action(mode_button::Action::Reset);
+                    }
+
+                    fsm.allow_request();
+                }
+                crate::fsm::State::Warning(code) => {
+
+                    if state_just_changed || mode_button.just_released() {
+
+                        led_channel.send(RGBState::FadeFlash {
+                            color: Color { r: 255, g: 100, b: 0 },
+                            fade_duration: 2000,
+                            pause: 300,
+                            flash_count: *code,
+                            on_duration: 30,
+                            off_duration: 270,
+                            final_pause: 1000,
+                        }).await;
+
+
+                        Timer::after(Duration::from_millis(100)).await; //Give the led thread time
+                    }
+
+                    if state_just_changed {
+
+                        mode_button.clear_actions();
+                        mode_button.push_action(mode_button::Action::Cancel);
+
+                    }
+
+
+                    //The only way to move past a warning is with the special Ignore state
+                    fsm.handle_request(|state| state.is_cancel());
+                }
+                crate::fsm::State::Cancel => {
+                    //Ignore is a special state that is the only way to exit warnings, leave boost early
+                    // and manually get out of descale.
+                    fsm.force_change(fsm::State::Start);
+                }
             }
         }
 

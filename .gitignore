@@ -25,3 +25,5 @@ schematics/front/production
 schematics/front/front-backups
 schematics/dev_board/production
 schematics/dev_board/dev_board-backups
+schematics/diagnostics/production
+schematics/diagnostics/diagnostics-backups

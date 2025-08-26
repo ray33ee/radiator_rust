@@ -32,6 +32,7 @@ mod network;
 mod rgb;
 mod fsm;
 mod mode_button;
+mod backtrace;
 
 use crate::fsm::FSM;
 use crate::rgb::State as RGBState;
@@ -58,7 +59,7 @@ use esp_hal::{
     time::Instant,
 };
 use esp_println::println;
-use esp_backtrace as _;
+//use esp_backtrace as _;
 use motor::Motor;
 use crate::thermo::Thermometer;
 use embassy_executor::Spawner;
@@ -71,11 +72,11 @@ use esp_hal::ledc::timer::TimerIFace;
 use esp_hal::ledc::channel::ChannelIFace;
 use crate::rgb::{RGBLED, Color};
 use esp_hal::ledc::channel::ChannelHW;
+use backtrace as _;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
-
 
 
 #[embassy_executor::task]
@@ -288,6 +289,18 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
+    /*unsafe {
+        #[cfg(target_arch = "riscv32")]
+        core::arch::asm!("unimp", options(noreturn));
+
+        // Xtensa (ESP32-S2/S3). `ill` is an illegal-instruction trap.
+        // If your toolchain doesn’t accept `ill`, use `.byte 0` repeatedly.
+        #[cfg(target_arch = "xtensa")]
+        core::arch::asm!("ill", options(noreturn));
+        // Fallback for older xtensa assemblers:
+        // core::arch::asm!(".byte 0, 0, 0", options(noreturn));
+    }*/
+
     /* Setup LED pins */
 
     let red = Output::new(peripherals.GPIO10, Level::High, OutputConfig::default());
@@ -334,7 +347,6 @@ async fn main(spawner: Spawner) {
     red_channel.set_duty(100).unwrap();
     green_channel.set_duty(0).unwrap();
     blue_channel.set_duty(0).unwrap();
-
 
     static LED_CHNL: StaticCell<Channel<NoopRawMutex, crate::rgb::State, 1>> = StaticCell::new();
     let led_channel: & 'static mut Channel<NoopRawMutex, crate::rgb::State, 1>  = LED_CHNL.init(Channel::new());
@@ -403,6 +415,7 @@ async fn main(spawner: Spawner) {
 
     // Spawn the network runner (must be running for sockets to work)
     spawner.spawn(net_task(runner)).unwrap();
+
 
 
     //Todo: add a timeout to this code so it doesn't block the code.

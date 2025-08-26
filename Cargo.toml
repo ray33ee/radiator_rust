@@ -53,7 +53,7 @@ atoi = { version = "2.0", default-features = false }
 itoa = { version = "1.0.15", default-features = false }
 base64 = { version = "0.22", default-features = false }
 esp-println = { version = "0.15.0", features = ["esp32c3"] }
-esp-backtrace = { version = "0.17.0", features = ["esp32c3", "println", "panic-handler"] }
+esp-backtrace = { version = "0.17.0", features = ["esp32c3", "println", "exception-handler"] }
 embedded-sdmmc = "0.9.0"
 embedded-hal-bus = "0.3.0"
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
@@ -68,6 +68,7 @@ embassy-sync = "0.7.1"
 static_cell = "2.1.1"
 postcard = { version = "0.7.3", default-features = false, features = []  }
 httparse = { version = "1.10.1", default-features = false }
+esp32c3 = "0.30.0"
 
 [profile.dev]
 # Rust debug is too slow.

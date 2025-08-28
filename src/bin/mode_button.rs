@@ -1,15 +1,12 @@
 use esp_hal::gpio::Input;
 use esp_hal::time::{Instant, Duration};
 use esp_hal::gpio::Level;
-use esp_println::println;
 use heapless::Vec;
 use crate::rgb::Color;
 
 //All possible actions from the mode button
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum Action {
-    End,
-    Nothing,
     ShortBoost,
     LongBoost,
     Cancel,
@@ -23,8 +20,6 @@ pub(crate) enum Action {
 impl Action {
     pub(crate) fn color(&self) -> Color {
         match self {
-            Action::End => { Color {r: 0, g: 0, b: 0 } },
-            Action::Nothing => { Color {r: 0, g: 0, b: 0 } }
             Action::ShortBoost => { Color {r: 255, g: 10, b: 0 } }
             Action::LongBoost => { Color {r: 255, g: 0, b: 0 } }
             Action::Cancel => { Color {r: 0, g: 10, b: 255 } }
@@ -125,11 +120,11 @@ impl<'a> Mode<'a> {
 
     }
 
-    pub(crate) fn just_pressed(& mut self) -> bool {
+    /*pub(crate) fn just_pressed(& mut self) -> bool {
         let pressed = self.just_pressed;
         self.just_pressed = false;
         pressed
-    }
+    }*/
 
     pub(crate) fn just_released(& mut self) -> bool {
         let released = self.just_released;
@@ -147,9 +142,9 @@ impl<'a> Mode<'a> {
         self.pin.level() == Level::Low
     }
 
-    pub(crate) fn index(&self) -> Option<u32> {
+    /*pub(crate) fn index(&self) -> Option<u32> {
         self.selected_index
-    }
+    }*/
 
     pub(crate) fn push_action(&mut self, action: Action) {
         self.actions.push(action).unwrap();

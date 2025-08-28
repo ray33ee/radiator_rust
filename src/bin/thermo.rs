@@ -9,6 +9,7 @@ use esp_hal::{
 pub(crate) struct Thermometer<'a> {
     sensor: Dht22<Flex<'a>, Delay>,
     last_read: Option<f32>,
+    thermostat: f32,
 }
 
 impl<'a> Thermometer<'a> {
@@ -29,17 +30,35 @@ impl<'a> Thermometer<'a> {
 
         let dht22 = Dht22::new(od_for_dht22, delay);
 
+        let thermostat = crate::storages::load_from_page(crate::storages::THERMO_ADDRESS).unwrap_or_else(|| 23.0);
+
         Self {
             sensor: dht22,
             last_read: None,
+            thermostat,
         }
 
     }
 
     pub(crate) fn get_temperature(&mut self) -> f32 {
-        if let Ok(reading) = self.sensor.read() {
-            self.last_read = Some(reading.temperature);
+
+        match self.sensor.read() {
+            Ok(reading) => {
+                self.last_read = Some(reading.temperature);
+            },
+            Err(_) => {
+            },
         }
+
         self.last_read.unwrap()
+    }
+
+    pub(crate) fn thermostat(&self) -> f32 {
+        self.thermostat
+    }
+
+    pub(crate) fn set_thermostat(&mut self, thermostat: f32) {
+        self.thermostat = thermostat;
+        crate::storages::save_to_page(crate::storages::THERMO_ADDRESS, thermostat);
     }
 }

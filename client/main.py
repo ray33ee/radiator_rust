@@ -5,7 +5,7 @@ from tkinter import simpledialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 
 ESP32_IP = "192.168.1.214"  # Replace with your ESP32's IP
-ESP32_PORT = 8080             # Port used by ESP32
+ESP32_PORT = 8080           # Port used by ESP32
 
 def send_message(message):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -13,12 +13,11 @@ def send_message(message):
         sock.connect((ESP32_IP, ESP32_PORT))
         sock.sendall(encode_message(message))
 
-        # Manually collect bytes until null
+        # Collect until socket closes (server ends response)
         data = bytearray()
         while True:
             chunk = sock.recv(4096)
-            print(chunk)
-            if not chunk:  # no more data
+            if not chunk:
                 break
             data.extend(chunk)
 
@@ -35,49 +34,13 @@ class DeviceGUI:
         btn_frame = tk.Frame(root)
         btn_frame.pack(side="top", fill="x", padx=8, pady=8)
 
-        # Function buttons with optional arg types: 'int' or 'str'
+        # Function buttons with optional arg types
         functions = [
-            ("Get Lock", "get_lock"),
-            ("Get Position", "get_position"),
-            ("Debug Push", "debug_push", int),
-            ("Debug Retract", "debug_retract", int),
-            ("Zero", "zero"),
-            ("Get Max", "get_max"),
-            ("Set Max", "set_max", int),
-            ("Unlock", "unlock"),
-            ("Get Time", "get_time"),
-            ("Get State", "get_state"),
-            ("Safe Mode", "safe_mode"),
-            ("Calibrate Mode", "calibrate_mode"),
-            ("Get Thermostat", "get_thermo"),
-            ("Set Thermostat", "set_thermo", int),
-            ("Read Temperature", "read_temperature"),
-            ("Get MAC Address", "get_mac_address"),
-            ("Schedule state", "schedule_state"),
-            ("Test state", "test_state"),
-            ("Soft Reset", "soft_reset"),
-            ("Reset Reason", "get_reset_reason"),
-            ("Registers dump", "m_reg_dump"),
-            ("Panic Reason", "m_panic_reason"),
-            ("Stack dump", "m_stack_dump"),
-            ("Sync Locally", "local_sync", int),
-            ("Change schedule", "change_schedule", str),
-            ("Get Schedule choice", "get_choice"),
-            ("Get state up time", "state_duration"),
-            ("Short Boost", "short_boost"),
-            ("Long Boost", "long_boost"),
-            ("Set Short Boost", "set_short_boost", int),
-            ("Set Long Boost", "set_long_boost", int),
-            ("Set Timezone", "set_timezone", str),
-        ]
-
-        functions = [
-            ("Unlock", "Unlock"),
+            ("Unlock & Zero", "UnlockAndZero"),
             ("Get lock", "GetLock"),
             ("Get position", "GetPosition"),
             ("Calibrate push", "CalibratePush", int),
             ("Calibrate pull", "CalibratePull", int),
-            ("Zero", "Zero"),
             ("Get max", "GetMax"),
             ("Set max", "SetMax", int),
             ("Get thermostat", "GetThermostat"),
@@ -92,25 +55,42 @@ class DeviceGUI:
             ("Enter Calibrate", "Calibrate"),
             ("Enter Safe Mode", "SafeMode"),
             ("Cancel", "Cancel"),
+            ("Get state", "CurrentState"),
+            ("Get boost duration", "GetBoostDuration"),
+            ("Set short boost duration", "SetShortDuration", int),
+            ("Set long boost duration", "SetLongDuration", int),
+            ("Change schedule", "SetVariant", str),
+            ("Get schedule type", "GetVariant"),
+            ("Add summer slot", "AddSummerSlot", str),
+            ("Clear Summer Schedule", "ClearSummer"),
+            ("Show Summer Schedule", "GetSummer"),
+
+            ("Add winter slot", "AddWinterSlot", str),
+            ("Clear winter Schedule", "ClearWinter"),
+            ("Show winter Schedule", "GetWinter"),
+
+            ("Add brightness slot", "AddBrightnessSlot", str),
+            ("Clear brightness Schedule", "ClearBrightness"),
+            ("Show brightness Schedule", "GetBrightness"),
         ]
 
-        # Create a button for each function
-        for label, name, *args in functions:
+        # ----- 3-column grid layout for buttons -----
+        BTN_COLUMNS = 3
+        for c in range(BTN_COLUMNS):
+            btn_frame.grid_columnconfigure(c, weight=1, uniform="btncols")
+
+        for idx, (label, name, *args) in enumerate(functions):
             arg_type = args[0] if args else None
-            btn = tk.Button(
+            r, c = divmod(idx, BTN_COLUMNS)
+            tk.Button(
                 btn_frame,
                 text=label,
-                width=25,
-                command=lambda n=name, t=arg_type: self.send(n, t)
-            )
-            btn.pack(pady=2, fill="x")
+                command=lambda n=name, t=arg_type: self.send(n, t),
+            ).grid(row=r, column=c, padx=4, pady=4, sticky="ew")
+        # --------------------------------------------
 
         # Multi-line, resizable output at the bottom
-        self.output = ScrolledText(
-            root,
-            wrap="word",
-            height=10
-        )
+        self.output = ScrolledText(root, wrap="word", height=10)
         self.output.pack(side="bottom", fill="both", expand=True, padx=8, pady=(0, 8))
         self.output.configure(state="disabled")
 
@@ -123,7 +103,7 @@ class DeviceGUI:
     def send(self, name, arg_type):
         arg_str = ""
         if arg_type:
-            user_input = simpledialog.askstring("Input", f"Enter {arg_type} argument for {name}:")
+            user_input = simpledialog.askstring("Input", f"Enter {arg_type.__name__} argument for {name}:")
             if user_input is None:
                 return
             arg_str = user_input.strip()
@@ -134,6 +114,12 @@ class DeviceGUI:
             if arg_type is int:
                 if not arg_str.isdigit():
                     messagebox.showerror("Invalid input", "Expected an integer")
+                    return
+            elif arg_type is float:
+                try:
+                    float(arg_str)
+                except ValueError:
+                    messagebox.showerror("Invalid input", "Expected a float")
                     return
             elif arg_type is str:
                 if not (arg_str.startswith("'") and arg_str.endswith("'")):

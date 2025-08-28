@@ -1,17 +1,96 @@
-use core::pin::pin;
 use esp_println::println;
-use esp_backtrace::arch;
-use esp_backtrace::arch::backtrace;
-use esp_hal::clock::CpuClock;
-use esp_hal::gpio::{Level, Output, OutputConfig};
-use esp_hal::ledc::{LSGlobalClkSource, Ledc};
-use esp_hal::timer::systimer::SystemTimer;
-use static_cell::StaticCell;
-use esp_hal::ledc::timer::TimerIFace;
-use esp_hal::ledc::channel::ChannelIFace;
+use esp_hal::ledc::channel::{ChannelHW};
 
 const RESET: &str = "\u{001B}[0m";
 const RED: &str = "\u{001B}[31m";
+
+#[derive(Debug)]
+pub(crate) struct TrapFrame {
+    /// Return address, stores the address to return to after a function call or
+    /// interrupt.
+    pub ra: usize,
+    /// Temporary register t0, used for intermediate values.
+    pub t0: usize,
+    /// Temporary register t1, used for intermediate values.
+    pub t1: usize,
+    /// Temporary register t2, used for intermediate values.
+    pub t2: usize,
+    /// Temporary register t3, used for intermediate values.
+    pub t3: usize,
+    /// Temporary register t4, used for intermediate values.
+    pub t4: usize,
+    /// Temporary register t5, used for intermediate values.
+    pub t5: usize,
+    /// Temporary register t6, used for intermediate values.
+    pub t6: usize,
+    /// Argument register a0, typically used to pass the first argument to a
+    /// function.
+    pub a0: usize,
+    /// Argument register a1, typically used to pass the second argument to a
+    /// function.
+    pub a1: usize,
+    /// Argument register a2, typically used to pass the third argument to a
+    /// function.
+    pub a2: usize,
+    /// Argument register a3, typically used to pass the fourth argument to a
+    /// function.
+    pub a3: usize,
+    /// Argument register a4, typically used to pass the fifth argument to a
+    /// function.
+    pub a4: usize,
+    /// Argument register a5, typically used to pass the sixth argument to a
+    /// function.
+    pub a5: usize,
+    /// Argument register a6, typically used to pass the seventh argument to a
+    /// function.
+    pub a6: usize,
+    /// Argument register a7, typically used to pass the eighth argument to a
+    /// function.
+    pub a7: usize,
+    /// Saved register s0, used to hold values across function calls.
+    pub s0: usize,
+    /// Saved register s1, used to hold values across function calls.
+    pub s1: usize,
+    /// Saved register s2, used to hold values across function calls.
+    pub s2: usize,
+    /// Saved register s3, used to hold values across function calls.
+    pub s3: usize,
+    /// Saved register s4, used to hold values across function calls.
+    pub s4: usize,
+    /// Saved register s5, used to hold values across function calls.
+    pub s5: usize,
+    /// Saved register s6, used to hold values across function calls.
+    pub s6: usize,
+    /// Saved register s7, used to hold values across function calls.
+    pub s7: usize,
+    /// Saved register s8, used to hold values across function calls.
+    pub s8: usize,
+    /// Saved register s9, used to hold values across function calls.
+    pub s9: usize,
+    /// Saved register s10, used to hold values across function calls.
+    pub s10: usize,
+    /// Saved register s11, used to hold values across function calls.
+    pub s11: usize,
+    /// Global pointer register, holds the address of the global data area.
+    pub gp: usize,
+    /// Thread pointer register, holds the address of the thread-local storage
+    /// area.
+    pub tp: usize,
+    /// Stack pointer register, holds the address of the top of the stack.
+    pub sp: usize,
+    /// Program counter, stores the address of the next instruction to be
+    /// executed.
+    pub pc: usize,
+    /// Machine status register, holds the current status of the processor,
+    /// including interrupt enable bits and privilege mode.
+    pub mstatus: usize,
+    /// Machine cause register, contains the reason for the trap (e.g.,
+    /// exception or interrupt number).
+    pub mcause: usize,
+    /// Machine trap value register, contains additional information about the
+    /// trap (e.g., faulting address).
+    pub mtval: usize,
+}
 
 
 //Really crude delay function dont judge plz
@@ -23,66 +102,6 @@ fn _ll_delay(mut delay: u64) {
     }
 
 }
-
-fn _ll_force_gpio(pin: u32) {
-    const GPIO_BASE: usize = 0x6000_4000;
-    const IO_MUX_BASE: usize = 0x6000_9000;
-    const GPIO_FUNC_OUT_SEL_BASE: usize = 0x6000_9554;
-    const GPIO_FUNC_IN_SEL_BASE: usize = 0x6000_9154;
-    const GPIO_ENABLE_W1TS: *mut u32 = (GPIO_BASE + 0x24) as *mut u32;
-
-    // Map of supported pins to IO_MUX register offset
-    let io_mux_offset = match pin {
-        10 => 0x2C,
-        20 => 0x54,
-        21 => 0x58,
-        _ => return, // Unsupported
-    };
-
-    unsafe {
-        let mask = 1 << pin;
-
-        // Step 1: Disconnect GPIO matrix input (detach peripheral from GPIO input)
-        let in_sel = (GPIO_FUNC_IN_SEL_BASE + (pin * 4) as usize) as *mut u32;
-        core::ptr::write_volatile(in_sel, 0x80);
-
-        // Step 2: Disconnect GPIO matrix output (detach peripheral from GPIO output)
-        let out_sel = (GPIO_FUNC_OUT_SEL_BASE + (pin * 4) as usize) as *mut u32;
-        core::ptr::write_volatile(out_sel, 256);
-
-        // Step 3: Configure IO_MUX for FUNC0 (GPIO), drive strength 3, OE enabled
-        let io_mux = (IO_MUX_BASE + io_mux_offset) as *mut u32;
-        let mut reg = core::ptr::read_volatile(io_mux);
-        reg &= !(0b111 | (3 << 7) | (1 << 9)); // Clear FUNC_SEL, drive, OE_EN
-        reg |= 0b000;        // FUNC0 (GPIO)
-        reg |= 3 << 7;       // Max drive strength
-        reg |= 1 << 9;       // Enable output
-        core::ptr::write_volatile(io_mux, reg);
-
-        // Step 4: Enable GPIO output driver
-        core::ptr::write_volatile(GPIO_ENABLE_W1TS, mask);
-    }
-}
-
-
-
-
-fn _ll_led_clear(pin_number: u32) {
-    const GPIO_BASE: usize = 0x6000_4000;
-    const GPIO_OUT_W1TC: *mut u32 = (GPIO_BASE + 0x0C) as *mut u32;
-    unsafe {
-        core::ptr::write_volatile(GPIO_OUT_W1TC, 1 << pin_number);
-    }
-}
-
-fn _ll_led_set(pin_number: u32) {
-    const GPIO_BASE: usize = 0x6000_4000;
-    const GPIO_OUT_W1TS: *mut u32 = (GPIO_BASE + 0x08) as *mut u32;
-    unsafe {
-        core::ptr::write_volatile(GPIO_OUT_W1TS, 1 << pin_number);
-    }
-}
-
 
 #[panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
@@ -112,21 +131,108 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
 
     println!("{}", RESET);
 
-    println!("Done:");
-
-    _ll_force_gpio(10);
+    unsafe {
+        crate::GREEN_REF.as_mut().unwrap().set_duty_hw(256);
+        crate::BLUE_REF.as_mut().unwrap().set_duty_hw(256);
+    }
 
     loop {
 
-        _ll_led_set(10);
 
-        _ll_delay(10_000_000);
+        for _ in 0..10 {
+            unsafe { crate::RED_REF.as_mut().unwrap().set_duty_hw(0); }
 
-        _ll_led_clear(10);
+            _ll_delay(10_000_000);
 
-        _ll_delay(10_000_000);
+            unsafe { crate::RED_REF.as_mut().unwrap().set_duty_hw(256); }
+
+            _ll_delay(10_000_000);
+        }
 
 
+        println!("{}", info);
+
+        println!();
+        println!();
+
+
+    }
+}
+
+
+
+#[cfg(target_arch = "riscv32")]
+#[unsafe(export_name = "ExceptionHandler")]
+fn exception_handler(context: &TrapFrame) -> ! {
+
+    let mepc = context.pc;
+    let code = context.mcause & 0xff;
+    let mtval = context.mtval;
+
+    let message = match code {
+        0 => "Instruction address misaligned",
+        1 => "Instruction access fault",
+        2 => "Illegal instruction",
+        3 => "Breakpoint",
+        4 => "Load address misaligned",
+        5 => "Load access fault",
+        6 => "Store/AMO address misaligned",
+        7 => "Store/AMO access fault",
+        8 => "Environment call from U-mode",
+        9 => "Environment call from S-mode",
+        10 => "Reserved",
+        11 => "Environment call from M-mode",
+        12 => "Instruction page fault",
+        13 => "Load page fault",
+        14 => "Stack overflow",
+        15 => "Store/AMO page fault",
+        _ => "UNKNOWN",
+    };
+
+    if code == 14 {
+        println!("");
+        println!(
+            "Stack overflow detected at 0x{:x} called by 0x{:x}",
+            mepc, context.ra
+        );
+        println!("");
+    } else {
+
+        println!(
+            "Exception '{}' mepc=0x{:08x}, mtval=0x{:08x}",
+            message, mepc, mtval
+        );
+
+        println!("{:?}", context);
+
+    }
+
+    unsafe {
+        crate::GREEN_REF.as_mut().unwrap().set_duty_hw(256);
+        crate::BLUE_REF.as_mut().unwrap().set_duty_hw(256);
+    }
+
+    loop {
+
+        for _ in 0..10 {
+            unsafe { crate::RED_REF.as_mut().unwrap().set_duty_hw(0); }
+
+            _ll_delay(10_000_000);
+
+            unsafe { crate::RED_REF.as_mut().unwrap().set_duty_hw(256); }
+
+            _ll_delay(10_000_000);
+        }
+
+        println!(
+            "Exception '{}' mepc=0x{:08x}, mtval=0x{:08x}",
+            message, mepc, mtval
+        );
+
+        println!("{:?}", context);
+
+        println!();
+        println!();
 
     }
 }

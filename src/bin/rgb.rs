@@ -81,6 +81,7 @@ pub(crate) struct RGBLED {
     start_time: Instant,
     units: heapless::Vec<Unit, 20>,
     cycle_duration: u64,
+    brightness: u8,
 }
 
 impl RGBLED {
@@ -89,7 +90,12 @@ impl RGBLED {
             start_time: Instant::now(),
             units: heapless::Vec::new(),
             cycle_duration: 2,
+            brightness: 100,
         }
+    }
+
+    pub(crate) fn set_brightness(&mut self, brightness: u8) {
+        self.brightness = brightness;
     }
 
     pub(crate) fn set_state(&mut self, new_state: State) {
@@ -165,7 +171,11 @@ impl RGBLED {
 
         let color = self.interpolate(millis);
 
-        change_color(color.r, color.g, color.b);
+        let r = color.r as u32 * self.brightness as u32 / 100;
+        let g = color.g as u32 * self.brightness as u32 / 100;
+        let b = color.b as u32 * self.brightness as u32 / 100;
+
+        change_color(r as u8, g as u8, b as u8);
 
     }
 }

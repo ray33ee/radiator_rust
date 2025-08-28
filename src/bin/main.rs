@@ -28,13 +28,15 @@ mod commands;
 mod motor;
 mod thermo;
 mod rtc;
-mod network;
 mod rgb;
 mod fsm;
 mod mode_button;
 mod backtrace;
+mod flashstore;
 
-use crate::fsm::FSM;
+use crate::fsm::BrightnessEntry;
+use esp_println::print;
+use crate::fsm::{ScheduleEntry, Variant, FSM};
 use crate::rgb::State as RGBState;
 use esp_hal::ledc::LSGlobalClkSource;
 use esp_hal::ledc::Ledc;
@@ -59,7 +61,7 @@ use esp_hal::{
     time::Instant,
 };
 use esp_println::println;
-//use esp_backtrace as _;
+use esp_backtrace as _;
 use motor::Motor;
 use crate::thermo::Thermometer;
 use embassy_executor::Spawner;
@@ -72,11 +74,20 @@ use esp_hal::ledc::timer::TimerIFace;
 use esp_hal::ledc::channel::ChannelIFace;
 use crate::rgb::{RGBLED, Color};
 use esp_hal::ledc::channel::ChannelHW;
-use backtrace as _;
+use core::fmt::Write;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
+
+static RED_CH: StaticCell<esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>> = StaticCell::new();
+static mut RED_REF: Option<&'static mut esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>> = None;
+
+static GREEN_CH: StaticCell<esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>> = StaticCell::new();
+static mut GREEN_REF: Option<&'static mut esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>> = None;
+
+static BLUE_CH: StaticCell<esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>> = StaticCell::new();
+static mut BLUE_REF: Option<&'static mut esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>> = None;
 
 
 #[embassy_executor::task]
@@ -107,8 +118,6 @@ async fn world_time_task(
         let time_endpoint = IpEndpoint::new(time_api_addr, 8080);
 
         socket.connect(time_endpoint).await.expect(format!("Could not connect to world time api: {}", world_time_api_dns).as_str());
-
-        println!("Connected to time api...");
 
         socket.write(b"GET /api/ip HTTP/1.1\r\n\
 Host: worldtimeapi.org\r\n\
@@ -247,12 +256,13 @@ async fn server_task(
 #[embassy_executor::task]
 async fn led_task(
     led_state: & 'static Channel<NoopRawMutex, crate::rgb::State, 1>,
-    red_channel: esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>,
-    green_channel: esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>,
-    blue_channel: esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>,
+    led_bright: & 'static Channel<NoopRawMutex, u8, 1>,
     initial_state: RGBState,
 ) -> ! {
 
+    let red_channel = unsafe { RED_REF.as_mut().unwrap() };
+    let green_channel = unsafe { GREEN_REF.as_mut().unwrap() };
+    let blue_channel = unsafe { BLUE_REF.as_mut().unwrap() };
 
     let mut rgb_led = RGBLED::new();
 
@@ -263,6 +273,10 @@ async fn led_task(
 
         if let Ok(state) = led_state.try_receive() {
             rgb_led.set_state(state);
+        }
+
+        if let Ok(brightness) = led_bright.try_receive() {
+            rgb_led.set_brightness(brightness);
         }
 
         rgb_led.update(|r, g, b| {
@@ -281,6 +295,19 @@ async fn led_task(
 
 }
 
+fn raise_exception() -> ! {
+    unsafe {
+        #[cfg(target_arch = "riscv32")]
+        core::arch::asm!("unimp", options(noreturn));
+
+        // Xtensa (ESP32-S2/S3). `ill` is an illegal-instruction trap.
+        // If your toolchain doesn’t accept `ill`, use `.byte 0` repeatedly.
+        core::arch::asm!("ill", options(noreturn))
+        // Fallback for older xtensa assemblers:
+        // core::arch::asm!(".byte 0, 0, 0", options(noreturn));
+    }
+}
+
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
     // generator version: 0.5.0
@@ -289,23 +316,13 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    /*unsafe {
-        #[cfg(target_arch = "riscv32")]
-        core::arch::asm!("unimp", options(noreturn));
-
-        // Xtensa (ESP32-S2/S3). `ill` is an illegal-instruction trap.
-        // If your toolchain doesn’t accept `ill`, use `.byte 0` repeatedly.
-        #[cfg(target_arch = "xtensa")]
-        core::arch::asm!("ill", options(noreturn));
-        // Fallback for older xtensa assemblers:
-        // core::arch::asm!(".byte 0, 0, 0", options(noreturn));
-    }*/
-
     /* Setup LED pins */
 
+    print!("LEDs...");
+
     let red = Output::new(peripherals.GPIO10, Level::High, OutputConfig::default());
-    let green = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
-    let blue = Output::new(peripherals.GPIO20, Level::High, OutputConfig::default());
+    let green = Output::new(peripherals.GPIO20, Level::High, OutputConfig::default());
+    let blue = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
 
     let mut myledc = Ledc::new(peripherals.LEDC);
     myledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
@@ -323,21 +340,21 @@ async fn main(spawner: Spawner) {
         }
     );
 
-    let mut red_channel = myledc.channel(esp_hal::ledc::channel::Number::Channel0, red);
+    let red_channel = RED_CH.init(myledc.channel(esp_hal::ledc::channel::Number::Channel0, red));
     red_channel.configure(esp_hal::ledc::channel::config::Config {
         timer: lstimer1,
         duty_pct: 10,
         pin_config: esp_hal::ledc::channel::config::PinConfig::PushPull,
     }).unwrap();
 
-    let mut green_channel = myledc.channel(esp_hal::ledc::channel::Number::Channel1, green);
+    let green_channel = GREEN_CH.init(myledc.channel(esp_hal::ledc::channel::Number::Channel1, green));
     green_channel.configure(esp_hal::ledc::channel::config::Config {
         timer: lstimer1,
         duty_pct: 10,
         pin_config: esp_hal::ledc::channel::config::PinConfig::PushPull,
     }).unwrap();
 
-    let mut blue_channel = myledc.channel(esp_hal::ledc::channel::Number::Channel2, blue);
+    let blue_channel = BLUE_CH.init(myledc.channel(esp_hal::ledc::channel::Number::Channel2, blue));
     blue_channel.configure(esp_hal::ledc::channel::config::Config {
         timer: lstimer1,
         duty_pct: 10,
@@ -348,29 +365,60 @@ async fn main(spawner: Spawner) {
     green_channel.set_duty(0).unwrap();
     blue_channel.set_duty(0).unwrap();
 
+    unsafe {
+        RED_REF = Some(red_channel);
+        GREEN_REF = Some(green_channel);
+        BLUE_REF = Some(blue_channel);
+    }
+
     static LED_CHNL: StaticCell<Channel<NoopRawMutex, crate::rgb::State, 1>> = StaticCell::new();
     let led_channel: & 'static mut Channel<NoopRawMutex, crate::rgb::State, 1>  = LED_CHNL.init(Channel::new());
 
-    spawner.spawn(led_task(led_channel, red_channel, blue_channel, green_channel, RGBState::OneFlash(Color { r: 0, g: 255, b:255 }, 100, 100))).unwrap();
+    static BRIGHT_CHNL: StaticCell<Channel<NoopRawMutex, u8, 1>> = StaticCell::new();
+    let brightness_channel: & 'static mut Channel<NoopRawMutex, u8, 1>  = BRIGHT_CHNL.init(Channel::new());
+
+    spawner.spawn(led_task(led_channel, brightness_channel, RGBState::OneFlash(Color { r: 0, g: 255, b:255 }, 100, 100))).unwrap();
+
+    println!("Done.");
 
     /* Set up button */
+
+    print!("Button...");
 
     let button_pin = esp_hal::gpio::Input::new(peripherals.GPIO8, InputConfig::default().with_pull(Pull::Up));
 
     let mut mode_button = crate::mode_button::Mode::new(button_pin);
 
+    println!("Done.");
+
     /* Set ip dht22 */
+
+    print!("Temperature sensor...");
+
     let mut thermo = Thermometer::new(peripherals.GPIO9);
 
     thermo.get_temperature();
 
-    /* Set up the sd storage interface */
-    let store = storages::SdInterface::new(peripherals.SPI2, peripherals.GPIO4, peripherals.GPIO6, peripherals.GPIO5, peripherals.GPIO7);
+    println!("Done.");
 
+    /* Set up the sd storage interface */
+
+    print!("SD card...");
+
+    //let mut store = storages::Storage::new();
+
+    println!("Done.");
 
     /* Set up the wifi and web server */
 
+    print!("Wifi...");
+
     led_channel.send(RGBState::OneFlash(Color { r: 0, g: 255, b: 255 }, 50, 50)).await;
+
+    let (ssid, password) = match storages::load_from_page(storages::WIFI_ADDRESS) {
+        Some((ssid, password)) => (ssid, password),
+        None => (String::new(), String::new())
+    };
 
     let rng = Rng::new(peripherals.RNG);
 
@@ -391,8 +439,8 @@ async fn main(spawner: Spawner) {
 
     wifi_controller
         .set_configuration(&esp_wifi::wifi::Configuration::Client(esp_wifi::wifi::ClientConfiguration {
-            ssid: store.ssid().into(),
-            password: store.password().into(),
+            ssid: ssid,
+            password: password,
             ..Default::default()
         }))
         .unwrap();
@@ -413,18 +461,34 @@ async fn main(spawner: Spawner) {
 
     );
 
+    println!("Done.");
+
+    print!("Web server...");
+
     // Spawn the network runner (must be running for sockets to work)
     spawner.spawn(net_task(runner)).unwrap();
 
 
+    match embassy_futures::select::select(
+        stack.wait_config_up(),
+        Timer::after(Duration::from_secs(15))
+    ).await {
+        embassy_futures::select::Either::First(_) => {
 
-    //Todo: add a timeout to this code so it doesn't block the code.
-    //Using embassy select
-    stack.wait_config_up().await;
+        }
+        embassy_futures::select::Either::Second(_) => {
+            //todo: Figure out how to handle this error
+            panic!("WiFi could not resolve IP address");
+        }
+    }
+
 
 
     let ip = stack.config_v4().unwrap().address;
-    println!("network up. IPv4: {}", ip);
+
+    println!("Done.");
+
+    println!("Network up. IPv4: {}", ip);
 
 
     led_channel.send(RGBState::OneFlash(Color { r: 255, g: 0, b: 50 }, 50, 50)).await;
@@ -438,6 +502,8 @@ async fn main(spawner: Spawner) {
     let return_channel: & 'static mut Channel<NoopRawMutex, String, 1>  = RET_CHNL.init(Channel::new());
 
     /* Get internet time */
+
+    print!("Get internet time...");
     static TIME_MUTEX: StaticCell<Mutex<NoopRawMutex, RTC>> = StaticCell::new();
     let time_mutex: & 'static mut Mutex<NoopRawMutex, RTC>  = TIME_MUTEX.init(Mutex::new(RTC::new()));
 
@@ -460,8 +526,31 @@ async fn main(spawner: Spawner) {
 
     }
 
+    println!("Done.");
 
-    /* Initialise stepper */
+    /* Initialise FSM */
+
+    print!("Start FSM...");
+
+    let mut fsm = FSM::new();
+
+    println!("Done.");
+
+    /* Check for calibration */
+
+    print!("Calibration Check...");
+
+    if storages::is_locked() {
+
+        fsm.force_change(fsm::State::Calibrate);
+
+
+    }
+    println!("Done.");
+
+    /* Initialise motor */
+
+    print!("Init motor...");
 
     let mut motor = {
 
@@ -470,24 +559,20 @@ async fn main(spawner: Spawner) {
         let p3 = peripherals.GPIO1;
         let p4 = peripherals.GPIO3;
 
-        Motor::new(p1, p2, p3, p4, & store)
+        Motor::new(p1, p2, p3, p4, 42)
 
     };
 
+    println!("Done.");
+
+    print!("Start Web server...");
     spawner.spawn(server_task(stack, message_channel, return_channel)).unwrap();
+
+    println!("Done.");
 
     led_channel.send(RGBState::Solid(Color { r: 0, g: 255, b: 0 })).await;
 
     Timer::after(Duration::from_millis(500)).await;
-
-    let mut fsm = FSM::new(& store);
-
-
-    if store.is_locked() {
-
-        fsm.force_change(fsm::State::Calibrate);
-
-    }
 
     loop {
 
@@ -512,11 +597,11 @@ async fn main(spawner: Spawner) {
                             format!("Device must be in calibrate mode for calibrate pull to work")
                         }
                     },
-                    Function::Unlock => {
+                    Function::UnlockAndZero => {
                         if fsm.state().is_calibrate() {
-                            if store.is_locked() {
-                                store.unlock();
-                                format!("Lock unlocked")
+                            if storages::is_locked() {
+                                storages::unlock_and_set_pos(0);
+                                format!("Lock unlocked and zeroed")
                             } else {
                                 format!("Already unlocked")
                             }
@@ -525,21 +610,21 @@ async fn main(spawner: Spawner) {
                         }
                     },
                     Function::GetLock => {
-                        format!("Lock is {}", if store.is_locked() { "locked" } else { "unlocked" })
+                        format!("Lock is {}", if storages::is_locked() { "locked" } else { "unlocked" })
                     },
                     Function::GetPosition => {
-                        format!("Position is at: {}", store.position())
-                    },
-                    Function::Zero => {
-                        if fsm.state().is_calibrate() {
-                            store.set_position(0);
-                            format!("Position set to 0")
+
+                        let position = storages::get_position();
+
+                        if position > crate::motor::ABSOLUTE_MAX_POSITION {
+                            format!("Cannot get position - device is locked or position is corrupt")
                         } else {
-                            format!("Device must be in calibrate mode for zero to work")
+                            format!("Position is at: {}", position)
                         }
+
                     },
                     Function::GetMax => {
-                        format!("Max position is at: {}", store.max_position())
+                        format!("Max position is at: {}", motor.max_position())
                     },
                     Function::SetMax(value) => {
                         if fsm.state().is_calibrate() {
@@ -550,10 +635,11 @@ async fn main(spawner: Spawner) {
                         }
                     },
                     Function::GetThermostat => {
-                        format!("Thermostat value is {}°C", store.thermostat())
+                        format!("Thermostat value is {}°C", thermo.thermostat())
                     },
-                    Function::SetThermostat(_) => {
-                        format!("Not Implemented")
+                    Function::SetThermostat(temperature) => {
+                        thermo.set_thermostat(temperature);
+                        format!("Thermostat set to {}°C", thermo.thermostat())
                     },
                     Function::ReadTemperature => {
                         format!("Temperature is {}°C", thermo.get_temperature())
@@ -608,15 +694,124 @@ async fn main(spawner: Spawner) {
                         format!("Cancelling mode (does nothing unless in warning, descale or boost mode)")
                     },
                     Function::ShortBoost => {
-                        //todo: replace literal with store.short_duration
-                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(600)));
+                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(motor.short_boost() as u64)));
                         format!("Starting short boost")
                     },
                     Function::LongBoost => {
-                        //todo: replace literal with store.long_duration
-                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(1800)));
+                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(motor.long_boost() as u64)));
                         format!("Starting long boost")
                     },
+                    Function::CurrentState => {
+                        format!("State is: {:?}", fsm.state())
+                    },
+                    Function::GetBoostDuration => {
+                        if let fsm::State::Boost(instant, duration) = fsm.state() {
+
+                            let seconds_left = (*duration - instant.elapsed()).as_secs();
+
+                            format!("Boost has {} minutes and {} seconds left", seconds_left / 60, seconds_left % 60)
+                        } else {
+                            format!("Radiator is not in boost mode")
+                        }
+                    }
+                    Function::SetShortDuration(duration) => {
+                        motor.set_short_boost(duration);
+                        format!("Set short boost duration")
+                    }
+                    Function::SetLongDuration(duration) => {
+                        motor.set_long_boost(duration);
+                        format!("Set long boost duration")
+                    }
+                    Function::SetVariant(variant) => {
+                        if let Some(v) = Variant::from_str(variant.as_str()) {
+                            fsm.set_variant(v);
+                            format!("Variant changed to: {}", variant)
+                        } else {
+                            format!("Invalid variant (must be summer or winter)")
+                        }
+                    }
+                    Function::GetVariant => {
+                        format!("Using {:?} schedule", fsm.variant())
+                    }
+                    Function::GetSummer => {
+                        if fsm.summer().len() == 0 {
+                            format!("Summer schedule is empty")
+                        } else {
+                            let mut str = String::new();
+                            for slot in fsm.summer() {
+                                write!(str, "\n{}", slot);
+                            }
+                            str
+                        }
+                    }
+                    Function::GetWinter => {
+                        if fsm.winter().len() == 0 {
+                            format!("Winter schedule is empty")
+                        } else {
+                            let mut str = String::new();
+                            for slot in fsm.winter() {
+                                write!(str, "\n{}", slot);
+                            }
+                            str
+                        }
+                    }
+                    Function::GetBrightness => {
+                        if fsm.brightness().len() == 0 {
+                            format!("Winter schedule is empty")
+                        } else {
+                            let mut str = String::new();
+                            for slot in fsm.brightness() {
+                                write!(str, "\n{}", slot);
+                            }
+                            str
+                        }
+                    }
+                    Function::AddSummerSlot(slot) => {
+
+                        if let Some(s) = ScheduleEntry::from_str(slot.as_str()) {
+
+                            fsm.add_summer(s);
+                            format!("Added summer slot")
+                        } else {
+                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
+                        }
+
+                    }
+                    Function::ClearSummer => {
+                        fsm.clear_summer();
+                        format!("Summer schedule cleared")
+                    }
+                    Function::AddWinterSlot(slot) => {
+
+                        if let Some(s) = ScheduleEntry::from_str(slot.as_str()) {
+
+                            fsm.add_winter(s);
+                            format!("Added winter slot")
+                        } else {
+                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
+                        }
+
+                    }
+                    Function::ClearWinter => {
+                        fsm.clear_winter();
+                        format!("Winter schedule cleared")
+                    }
+                    Function::AddBrightnessSlot(slot) => {
+
+                        if let Some(s) = BrightnessEntry::from_str(slot.as_str()) {
+
+                            fsm.add_brightness(s);
+                            format!("Added brightness slot")
+                        } else {
+                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
+                        }
+
+                    }
+                    Function::ClearBrightness => {
+                        fsm.clear_brightness();
+                        format!("Brightness schedule cleared")
+                    }
+
 
                 };
 
@@ -633,15 +828,11 @@ async fn main(spawner: Spawner) {
         if let Some(action) = mode_button.released_action() {
 
             match action {
-                mode_button::Action::End => {}
-                mode_button::Action::Nothing => {}
                 mode_button::Action::ShortBoost => {
-                    //todo: replace literal with store.short_duration
-                    fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(600)));
+                    fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(motor.short_boost() as u64)));
                 }
                 mode_button::Action::LongBoost => {
-                    //todo: replace literal with store.long_duration
-                    fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(1800)));
+                    fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(motor.long_boost() as u64)));
                 }
                 mode_button::Action::Cancel => {
                     fsm.request_change(fsm::State::Cancel);
@@ -659,10 +850,7 @@ async fn main(spawner: Spawner) {
                     motor.calibrate_pull(7);
                 }
                 mode_button::Action::ZeroUnlock => {
-                    store.set_position(0);
-                    if store.is_locked() {
-                        store.unlock();
-                    }
+                    storages::unlock_and_set_pos(0);
                 }
             }
         }
@@ -686,7 +874,6 @@ async fn main(spawner: Spawner) {
             };
 
             match fsm.state() {
-                crate::fsm::State::Empty => {}
                 crate::fsm::State::Start => {
                     fsm.change_from_schedule(current_time);
 
@@ -713,7 +900,7 @@ async fn main(spawner: Spawner) {
                     }
 
                     let actual = thermo.get_temperature();
-                    let thermostat = store.thermostat();
+                    let thermostat = thermo.thermostat();
 
                     if actual < (thermostat - 0.25) {
                         motor.open_valve();
@@ -793,7 +980,6 @@ async fn main(spawner: Spawner) {
                         mode_button.clear_actions();
                         mode_button.push_action(mode_button::Action::Retract);
                         mode_button.push_action(mode_button::Action::ZeroUnlock);
-                        mode_button.push_action(mode_button::Action::Safe);
                         mode_button.push_action(mode_button::Action::Reset);
                     }
 
@@ -851,6 +1037,8 @@ async fn main(spawner: Spawner) {
                         mode_button.push_action(mode_button::Action::Reset);
                     }
 
+                    fsm.change_from_schedule(current_time);
+
                     fsm.allow_request();
                 }
                 crate::fsm::State::Warning(code) => {
@@ -888,9 +1076,13 @@ async fn main(spawner: Spawner) {
                     fsm.force_change(fsm::State::Start);
                 }
             }
+
+            if let Some(brightness) = fsm.get_brightness(current_time) {
+                println!("Brightness: {}", brightness);
+                brightness_channel.send(brightness).await;
+            }
         }
 
-        /**/
 
         Timer::after(Duration::from_millis(1)).await;
     }

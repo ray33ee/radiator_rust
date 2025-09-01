@@ -3,4 +3,5 @@
   (lib (name "esp32-s2")(type "KiCad")(uri "${KIPRJMOD}/esp32-s2.pretty")(options "")(descr ""))
   (lib (name "8836")(type "KiCad")(uri "${KIPRJMOD}/8836.pretty")(options "")(descr ""))
   (lib (name "usb-c")(type "KiCad")(uri "${KIPRJMOD}/usb-c.pretty")(options "")(descr ""))
+  (lib (name "connector")(type "KiCad")(uri "${KIPRJMOD}/connector.pretty")(options "")(descr ""))
 )

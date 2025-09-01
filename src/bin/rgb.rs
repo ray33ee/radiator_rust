@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use embassy_time::Instant;
 
 #[derive(Debug)]
@@ -79,7 +80,7 @@ impl Unit {
 
 pub(crate) struct RGBLED {
     start_time: Instant,
-    units: heapless::Vec<Unit, 20>,
+    units: Vec<Unit>,
     cycle_duration: u64,
     brightness: u8,
 }
@@ -88,7 +89,7 @@ impl RGBLED {
     pub(crate) fn new() -> Self {
         Self {
             start_time: Instant::now(),
-            units: heapless::Vec::new(),
+            units: Vec::new(),
             cycle_duration: 2,
             brightness: 100,
         }
@@ -105,39 +106,39 @@ impl RGBLED {
 
         match new_state {
             State::Off => {
-                self.units.push(Unit::off(2)).unwrap();
+                self.units.push(Unit::off(2));
             }
             State::Rainbow(duration) => {
-                self.units.push(Unit::new(255, 0, 0, 0, 255, 0, duration / 3)).unwrap();
-                self.units.push(Unit::new(0, 255, 0, 0, 0, 255, duration / 3)).unwrap();
-                self.units.push(Unit::new(0, 0, 255, 255, 0, 0, duration / 3)).unwrap();
+                self.units.push(Unit::new(255, 0, 0, 0, 255, 0, duration / 3));
+                self.units.push(Unit::new(0, 255, 0, 0, 0, 255, duration / 3));
+                self.units.push(Unit::new(0, 0, 255, 255, 0, 0, duration / 3));
             }
             State::Solid(color) => {
-                self.units.push(Unit::solid(color.r, color.g, color.b, 2)).unwrap();
+                self.units.push(Unit::solid(color.r, color.g, color.b, 2));
             }
             State::Fade(color, duration) => {
-                self.units.push(Unit::up_fade(color.r, color.g, color.b, duration / 2)).unwrap();
-                self.units.push(Unit::down_fade(color.r, color.g, color.b, duration / 2)).unwrap();
+                self.units.push(Unit::up_fade(color.r, color.g, color.b, duration / 2));
+                self.units.push(Unit::down_fade(color.r, color.g, color.b, duration / 2));
             }
             State::CrossFade { from, to, duration } => {
-                self.units.push(Unit::new(from.r, from.g, from.b, to.r, to.g, to.b, duration / 2)).unwrap();
-                self.units.push(Unit::new(to.r, to.g, to.b, from.r, from.g, from.b, duration / 2)).unwrap();
+                self.units.push(Unit::new(from.r, from.g, from.b, to.r, to.g, to.b, duration / 2));
+                self.units.push(Unit::new(to.r, to.g, to.b, from.r, from.g, from.b, duration / 2));
             }
             State::OneFlash(from, on_time, off_time) => {
-                self.units.push(Unit::solid(from.r, from.g, from.b, on_time)).unwrap();
-                self.units.push(Unit::off(off_time)).unwrap();
+                self.units.push(Unit::solid(from.r, from.g, from.b, on_time));
+                self.units.push(Unit::off(off_time));
             }
             State::FadeFlash { color, fade_duration, pause, flash_count, on_duration, off_duration, final_pause } => {
-                self.units.push(Unit::up_fade(color.r, color.g, color.b, fade_duration / 2)).unwrap();
-                self.units.push(Unit::down_fade(color.r, color.g, color.b, fade_duration / 2)).unwrap();
-                self.units.push(Unit::off(pause)).unwrap();
+                self.units.push(Unit::up_fade(color.r, color.g, color.b, fade_duration / 2));
+                self.units.push(Unit::down_fade(color.r, color.g, color.b, fade_duration / 2));
+                self.units.push(Unit::off(pause));
 
                 for _ in 0..flash_count {
-                    self.units.push(Unit::solid(color.r, color.g, color.b, on_duration)).unwrap();
-                    self.units.push(Unit::off(off_duration)).unwrap();
+                    self.units.push(Unit::solid(color.r, color.g, color.b, on_duration));
+                    self.units.push(Unit::off(off_duration));
                 }
 
-                self.units.push(Unit::off(final_pause)).unwrap();
+                self.units.push(Unit::off(final_pause));
 
             }
         }

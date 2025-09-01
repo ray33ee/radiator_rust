@@ -8,7 +8,7 @@ use esp_hal::rom::spiflash::{
 };
 
 #[repr(C, align(4))]
-pub struct FlashSectorBuffer {
+pub(crate) struct FlashSectorBuffer {
     // NOTE: Ensure that no unaligned fields are added above `data` to maintain its required alignment
     data: [u8; FlashStorage::SECTOR_SIZE as usize],
 }
@@ -29,27 +29,26 @@ impl DerefMut for FlashSectorBuffer {
 
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum FlashStorageError {
+pub(crate) enum FlashStorageError {
     IoError,
     IoTimeout,
     CantUnlock,
-    NotAligned,
     OutOfBounds,
-    Other(i32),
+    Other,
 }
 
 #[inline(always)]
-pub fn check_rc(rc: i32) -> Result<(), FlashStorageError> {
+pub(crate) fn check_rc(rc: i32) -> Result<(), FlashStorageError> {
     match rc {
         0 => Ok(()),
         1 => Err(FlashStorageError::IoError),
         2 => Err(FlashStorageError::IoTimeout),
-        _ => Err(FlashStorageError::Other(rc)),
+        _ => Err(FlashStorageError::Other),
     }
 }
 
 #[derive(Debug)]
-pub struct FlashStorage {
+pub(crate) struct FlashStorage {
     pub(crate) capacity: usize,
     unlocked: bool,
 }
@@ -61,16 +60,14 @@ impl Default for FlashStorage {
 }
 
 impl FlashStorage {
-    pub const WORD_SIZE: u32 = 4;
-    pub const SECTOR_SIZE: u32 = 4096;
+    pub(crate) const WORD_SIZE: u32 = 4;
+    pub(crate) const SECTOR_SIZE: u32 = 4096;
 
-    pub fn new() -> FlashStorage {
+    pub(crate) fn new() -> FlashStorage {
         let mut storage = FlashStorage {
             capacity: 0,
             unlocked: false,
         };
-
-        const ADDR: u32 = 0x0000;
 
         storage.capacity = 4 * 1024 * 1024;
 
@@ -137,7 +134,7 @@ impl FlashStorage {
         ) } )
     }
 
-    pub fn read(&mut self, offset: u32, mut bytes: &mut [u8]) -> Result<(), FlashStorageError> {
+    pub(crate) fn read(&mut self, offset: u32, mut bytes: &mut [u8]) -> Result<(), FlashStorageError> {
         self.check_bounds(offset, bytes.len())?;
 
         let mut data_offset = offset % Self::WORD_SIZE;
@@ -167,7 +164,7 @@ impl FlashStorage {
     }
 
 
-    pub fn write(&mut self, offset: u32, mut bytes: &[u8]) -> Result<(), FlashStorageError> {
+    pub(crate) fn write(&mut self, offset: u32, mut bytes: &[u8]) -> Result<(), FlashStorageError> {
         self.check_bounds(offset, bytes.len())?;
 
         let mut data_offset = offset % Self::SECTOR_SIZE;

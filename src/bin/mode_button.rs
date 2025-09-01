@@ -1,7 +1,7 @@
+use alloc::vec::Vec;
 use esp_hal::gpio::Input;
 use esp_hal::time::{Instant, Duration};
 use esp_hal::gpio::Level;
-use heapless::Vec;
 use crate::rgb::Color;
 
 //All possible actions from the mode button
@@ -12,7 +12,6 @@ pub(crate) enum Action {
     Cancel,
     Calibrate,
     Safe,
-    Reset,
     Retract,
     ZeroUnlock,
 }
@@ -25,7 +24,6 @@ impl Action {
             Action::Cancel => { Color {r: 0, g: 10, b: 255 } }
             Action::Calibrate => { Color {r: 255, g: 150, b: 0 } }
             Action::Safe => { Color {r: 255, g: 255, b: 255 } }
-            Action::Reset => { Color {r: 100, g: 0, b: 255 } }
             Action::Retract => { Color {r: 255, g: 255, b: 0 } }
             Action::ZeroUnlock => { Color {r: 0, g: 255, b: 100 } }
         }
@@ -46,7 +44,7 @@ pub(crate) struct Mode<'a> {
 
     selected_index: Option<u32>,
 
-    actions: Vec<Action, 10>,
+    actions: Vec<Action>,
 
     released_action: Option<Action>,
 }
@@ -147,7 +145,7 @@ impl<'a> Mode<'a> {
     }*/
 
     pub(crate) fn push_action(&mut self, action: Action) {
-        self.actions.push(action).unwrap();
+        self.actions.push(action);
     }
 
     pub(crate) fn clear_actions(&mut self) {

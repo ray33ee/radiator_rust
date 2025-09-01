@@ -1,5 +1,7 @@
+use core::fmt::Display;
 use esp_println::println;
 use esp_hal::ledc::channel::{ChannelHW};
+use crate::{BLUE_REF, GREEN_REF, RED_REF};
 
 const RESET: &str = "\u{001B}[0m";
 const RED: &str = "\u{001B}[31m";
@@ -103,20 +105,52 @@ fn _ll_delay(mut delay: u64) {
 
 }
 
+fn _ll_short_delay() {
+    _ll_delay(10_000_000);
+}
+
+fn _ll_clear_gb() {
+    unsafe {
+        if GREEN_REF.is_some() {
+            crate::GREEN_REF.as_mut().unwrap().set_duty_hw(256); //Safe
+        }
+
+        if BLUE_REF.is_some() {
+            crate::BLUE_REF.as_mut().unwrap().set_duty_hw(256); //Safe
+        }
+    }
+}
+
+fn _ll_flash_r() {
+    unsafe {
+        if RED_REF.is_some() {
+            crate::RED_REF.as_mut().unwrap().set_duty_hw(0); //Safe
+        }
+
+        _ll_short_delay();
+
+        if RED_REF.is_some() {
+            crate::RED_REF.as_mut().unwrap().set_duty_hw(256); //Safe
+        }
+
+        _ll_short_delay();
+    }
+}
+
 #[panic_handler]
-fn panic_handler(info: &core::panic::PanicInfo) -> ! {
+fn panic_handler(info: &core::panic::PanicInfo<'_>) -> ! {
 
     println!("{}", RED);
 
-    println!("");
+    println!();
     println!("Custom panic handler");
     println!("====================== PANIC ======================");
 
     println!("{}", info);
 
-    println!("");
+    println!();
     println!("Backtrace:");
-    println!("");
+    println!();
 
     let backtrace = esp_backtrace::Backtrace::capture();
     #[cfg(target_arch = "riscv32")]
@@ -131,22 +165,15 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
 
     println!("{}", RESET);
 
-    unsafe {
-        crate::GREEN_REF.as_mut().unwrap().set_duty_hw(256);
-        crate::BLUE_REF.as_mut().unwrap().set_duty_hw(256);
-    }
+    _ll_clear_gb();
+
 
     loop {
 
 
         for _ in 0..10 {
-            unsafe { crate::RED_REF.as_mut().unwrap().set_duty_hw(0); }
 
-            _ll_delay(10_000_000);
-
-            unsafe { crate::RED_REF.as_mut().unwrap().set_duty_hw(256); }
-
-            _ll_delay(10_000_000);
+            _ll_flash_r();
         }
 
 
@@ -190,12 +217,12 @@ fn exception_handler(context: &TrapFrame) -> ! {
     };
 
     if code == 14 {
-        println!("");
+        println!();
         println!(
             "Stack overflow detected at 0x{:x} called by 0x{:x}",
             mepc, context.ra
         );
-        println!("");
+        println!();
     } else {
 
         println!(
@@ -207,22 +234,11 @@ fn exception_handler(context: &TrapFrame) -> ! {
 
     }
 
-    unsafe {
-        crate::GREEN_REF.as_mut().unwrap().set_duty_hw(256);
-        crate::BLUE_REF.as_mut().unwrap().set_duty_hw(256);
-    }
+    _ll_clear_gb();
 
     loop {
 
-        for _ in 0..10 {
-            unsafe { crate::RED_REF.as_mut().unwrap().set_duty_hw(0); }
-
-            _ll_delay(10_000_000);
-
-            unsafe { crate::RED_REF.as_mut().unwrap().set_duty_hw(256); }
-
-            _ll_delay(10_000_000);
-        }
+        _ll_flash_r();
 
         println!(
             "Exception '{}' mepc=0x{:08x}, mtval=0x{:08x}",

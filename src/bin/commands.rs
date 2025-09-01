@@ -28,6 +28,8 @@ pub(crate) enum Function {
     Cancel,
     ShortBoost,
     LongBoost,
+    Rainbow,
+
     GetBoostDuration,
 
     SetShortDuration(u32),
@@ -49,6 +51,12 @@ pub(crate) enum Function {
     GetWinter,
     GetBrightness,
 
+    RemoveSummerSlot(String),
+    RemoveWinterSlot(String),
+    RemoveBrightnessSlot(String),
+
+    StartPanic(String),
+    StartException(String),
 
 
 }

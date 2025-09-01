@@ -34,47 +34,66 @@ mod mode_button;
 mod backtrace;
 mod flashstore;
 
-use crate::fsm::BrightnessEntry;
-use esp_println::print;
-use crate::fsm::{ScheduleEntry, Variant, FSM};
-use crate::rgb::State as RGBState;
-use esp_hal::ledc::LSGlobalClkSource;
-use esp_hal::ledc::Ledc;
-use esp_hal::gpio::{InputConfig, OutputConfig, Pull};
-use esp_hal::gpio::Level;
-use esp_hal::gpio::Output;
+use embassy_futures::select::Either::First;
+use esp_println::{println, print};
+use esp_backtrace as _;
 use alloc::format;
 use alloc::string::String;
-use embassy_time::{Duration, Timer};
-use embassy_net::tcp::TcpSocket;
-use embassy_net::Stack;
-use embassy_net::StackResources;
 use static_cell::StaticCell;
-use esp_hal::timer::systimer::SystemTimer;
 use esp_wifi::wifi::WifiDevice;
-use crate::commands::{Function, Message};
 use esp_hal::{
     clock::CpuClock,
     main,
-    timer::timg::TimerGroup,
+    timer::{
+        timg::TimerGroup,
+        systimer::SystemTimer,
+    },
     rng::Rng,
     time::Instant,
+    ledc::{
+        timer::TimerIFace,
+        channel::{ChannelIFace, ChannelHW},
+        LSGlobalClkSource,
+        Ledc,
+    },
+    gpio::{
+        InputConfig,
+        OutputConfig,
+        Pull,
+        Level,
+        Output,
+    },
 };
-use esp_println::println;
-use esp_backtrace as _;
-use motor::Motor;
-use crate::thermo::Thermometer;
+use crate::{
+    motor::Motor,
+    fsm::{
+        BrightnessEntry,
+        ScheduleEntry,
+        Variant,
+        FSM,
+    },
+    rgb::{State as RGBState, RGBLED, Color},
+    rtc::RTC,
+    thermo::Thermometer,
+    commands::{Function, Message},
+
+};
 use embassy_executor::Spawner;
-use crate::rtc::RTC;
-use embassy_sync::channel::Channel;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::mutex::Mutex;
+use embassy_time::{Delay, Duration, Timer};
+use embassy_sync::{
+    channel::Channel,
+    blocking_mutex::raw::NoopRawMutex,
+    mutex::Mutex,
+};
+use embassy_net::{
+    tcp::TcpSocket,
+    Stack,
+    StackResources
+};
 use smoltcp::wire::IpEndpoint;
-use esp_hal::ledc::timer::TimerIFace;
-use esp_hal::ledc::channel::ChannelIFace;
-use crate::rgb::{RGBLED, Color};
-use esp_hal::ledc::channel::ChannelHW;
 use core::fmt::Write;
+use esp_wifi::wifi::event::wifi_event_sta_connected_t;
+use crate::fsm::{State, WarningType};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -99,7 +118,6 @@ async fn net_task(mut runner: embassy_net::Runner<'static, WifiDevice<'static>>)
 #[embassy_executor::task]
 async fn world_time_task(
     stack: Stack<'static>,
-    //time: & 'static Channel<NoopRawMutex, (), 1>,
     time_mutex: & 'static Mutex<NoopRawMutex, RTC>,
 
 ) -> ! {
@@ -112,60 +130,74 @@ async fn world_time_task(
         let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
 
         let world_time_api_dns = "192.168.1.111";
+        let world_time_api_port = 8080;
 
-        let time_api_addr = stack.dns_query(world_time_api_dns, smoltcp::wire::DnsQueryType::A).await.unwrap()[0];
+        if let Ok(time_api_addrs) = stack.dns_query(world_time_api_dns, smoltcp::wire::DnsQueryType::A).await {
+            if time_api_addrs.len() > 0 {
 
-        let time_endpoint = IpEndpoint::new(time_api_addr, 8080);
+                let time_api_addr = time_api_addrs[0];
 
-        socket.connect(time_endpoint).await.expect(format!("Could not connect to world time api: {}", world_time_api_dns).as_str());
+                let time_endpoint = IpEndpoint::new(time_api_addr, world_time_api_port);
 
-        socket.write(b"GET /api/ip HTTP/1.1\r\n\
+                if let Ok(_) = socket.connect(time_endpoint).await {
+
+                    if let Ok(_) = socket.write(b"GET /api/ip HTTP/1.1\r\n\
 Host: worldtimeapi.org\r\n\
 User-Agent: esp32-rust\r\n\
 Connection: close\r\n\
-\r\n").await.unwrap();
+\r\n").await        {
+                        let result_got_time = socket.read_with(|bytes| {
 
-        let result_got_time = socket.read_with(|bytes| {
+                            if let Some(body_begin) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                                if let Some(body_end) = &bytes[body_begin+4..].iter().position(|&b| b == b'}') {
+                                    let json_str = core::str::from_utf8(&bytes[body_begin+4..*body_end + body_begin+5]).unwrap();
 
-            if let Some(body_begin) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-                if let Some(body_end) = &bytes[body_begin+4..].iter().position(|&b| b == b'}') {
-                    let json = core::str::from_utf8(&bytes[body_begin+4..*body_end + body_begin+5]).unwrap();
+                                    let parsed: serde_json::Value = serde_json::from_str(json_str).unwrap();
 
-                    let parsed: serde_json::Value = serde_json::from_str(json).unwrap();
-
-                    let datetime_string = parsed.get("datetime").unwrap().as_str();
-
-                    println!("datetime_string {}", datetime_string.unwrap());
+                                    let datetime_string = parsed.get("datetime").unwrap().as_str();
 
 
-                    return (bytes.len(), Some(RTC::epoch_from_iso(datetime_string.unwrap())));
+                                    return (bytes.len(), Some(RTC::epoch_from_iso(datetime_string.unwrap())));
+
+
+                                }
+                            }
+
+
+                            (bytes.len(), None)
+
+                        }).await;
+
+                        if let Ok(got_time) = result_got_time {
+                            if let Some(epoch) = got_time {
+                                let mut guard = time_mutex.lock().await;
+
+                                guard.update_epoch(epoch);
+
+
+                                socket.close();
+
+                                //Put this thread to sleep when the time is found
+                                break;
+                            }
+                        }
+
+                        println!("Time not found");
+
+                        socket.close();
+                    } else {
+                        socket.close();
+                    }
 
 
                 }
-            }
 
 
-            (bytes.len(), None)
-
-        }).await;
-
-        if let Ok(got_time) = result_got_time {
-            if let Some(epoch) = got_time {
-                let mut guard = time_mutex.lock().await;
-
-                guard.update_epoch(epoch);
-
-
-                socket.close();
-
-                //Put this thread to sleep when the time is found
-                break;
             }
         }
 
-        println!("Time not found");
 
-        socket.close();
+
 
         Timer::after(Duration::from_secs(3)).await;
 
@@ -260,9 +292,9 @@ async fn led_task(
     initial_state: RGBState,
 ) -> ! {
 
-    let red_channel = unsafe { RED_REF.as_mut().unwrap() };
-    let green_channel = unsafe { GREEN_REF.as_mut().unwrap() };
-    let blue_channel = unsafe { BLUE_REF.as_mut().unwrap() };
+    let red_channel = unsafe { RED_REF.as_mut().unwrap() }; //Safe
+    let green_channel = unsafe { GREEN_REF.as_mut().unwrap() }; //Safe
+    let blue_channel = unsafe { BLUE_REF.as_mut().unwrap() }; //Safe
 
     let mut rgb_led = RGBLED::new();
 
@@ -295,18 +327,6 @@ async fn led_task(
 
 }
 
-fn raise_exception() -> ! {
-    unsafe {
-        #[cfg(target_arch = "riscv32")]
-        core::arch::asm!("unimp", options(noreturn));
-
-        // Xtensa (ESP32-S2/S3). `ill` is an illegal-instruction trap.
-        // If your toolchain doesn’t accept `ill`, use `.byte 0` repeatedly.
-        core::arch::asm!("ill", options(noreturn))
-        // Fallback for older xtensa assemblers:
-        // core::arch::asm!(".byte 0, 0, 0", options(noreturn));
-    }
-}
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -335,7 +355,7 @@ async fn main(spawner: Spawner) {
                 duty: esp_hal::ledc::timer::config::Duty::Duty8Bit,
                 clock_source: esp_hal::ledc::timer::LSClockSource::APBClk,
                 frequency: esp_hal::time::Rate::from_khz(24),
-            }).unwrap();
+            }).unwrap(); //Safe
             t
         }
     );
@@ -345,30 +365,30 @@ async fn main(spawner: Spawner) {
         timer: lstimer1,
         duty_pct: 10,
         pin_config: esp_hal::ledc::channel::config::PinConfig::PushPull,
-    }).unwrap();
+    }).unwrap(); //Safe
 
     let green_channel = GREEN_CH.init(myledc.channel(esp_hal::ledc::channel::Number::Channel1, green));
     green_channel.configure(esp_hal::ledc::channel::config::Config {
         timer: lstimer1,
         duty_pct: 10,
         pin_config: esp_hal::ledc::channel::config::PinConfig::PushPull,
-    }).unwrap();
+    }).unwrap(); //Safe
 
     let blue_channel = BLUE_CH.init(myledc.channel(esp_hal::ledc::channel::Number::Channel2, blue));
     blue_channel.configure(esp_hal::ledc::channel::config::Config {
         timer: lstimer1,
         duty_pct: 10,
         pin_config: esp_hal::ledc::channel::config::PinConfig::PushPull,
-    }).unwrap();
-
-    red_channel.set_duty(100).unwrap();
-    green_channel.set_duty(0).unwrap();
-    blue_channel.set_duty(0).unwrap();
+    }).unwrap(); //Safe
 
     unsafe {
         RED_REF = Some(red_channel);
         GREEN_REF = Some(green_channel);
         BLUE_REF = Some(blue_channel);
+
+        RED_REF.as_ref().unwrap().set_duty_hw(256); //Safe
+        GREEN_REF.as_ref().unwrap().set_duty_hw(0); //Safe
+        GREEN_REF.as_ref().unwrap().set_duty_hw(0); //Safe
     }
 
     static LED_CHNL: StaticCell<Channel<NoopRawMutex, crate::rgb::State, 1>> = StaticCell::new();
@@ -377,7 +397,7 @@ async fn main(spawner: Spawner) {
     static BRIGHT_CHNL: StaticCell<Channel<NoopRawMutex, u8, 1>> = StaticCell::new();
     let brightness_channel: & 'static mut Channel<NoopRawMutex, u8, 1>  = BRIGHT_CHNL.init(Channel::new());
 
-    spawner.spawn(led_task(led_channel, brightness_channel, RGBState::OneFlash(Color { r: 0, g: 255, b:255 }, 100, 100))).unwrap();
+    spawner.spawn(led_task(led_channel, brightness_channel, RGBState::OneFlash(Color { r: 0, g: 255, b:255 }, 100, 100))).unwrap(); //Unrecoverable
 
     println!("Done.");
 
@@ -398,133 +418,6 @@ async fn main(spawner: Spawner) {
     let mut thermo = Thermometer::new(peripherals.GPIO9);
 
     thermo.get_temperature();
-
-    println!("Done.");
-
-    /* Set up the sd storage interface */
-
-    print!("SD card...");
-
-    //let mut store = storages::Storage::new();
-
-    println!("Done.");
-
-    /* Set up the wifi and web server */
-
-    print!("Wifi...");
-
-    led_channel.send(RGBState::OneFlash(Color { r: 0, g: 255, b: 255 }, 50, 50)).await;
-
-    let (ssid, password) = match storages::load_from_page(storages::WIFI_ADDRESS) {
-        Some((ssid, password)) => (ssid, password),
-        None => (String::new(), String::new())
-    };
-
-    let rng = Rng::new(peripherals.RNG);
-
-    let timer0 = SystemTimer::new(peripherals.SYSTIMER);
-    esp_hal_embassy::init(timer0.alarm0);
-
-    let timer1 = TimerGroup::new(peripherals.TIMG0);
-
-    static WIFI_INIT: StaticCell<esp_wifi::EspWifiController<'_>> = StaticCell::new();
-    let wifi_init = WIFI_INIT
-        .init(esp_wifi::init(timer1.timer0, rng).expect("Failed to initialize WIFI/BLE controller"));
-
-
-
-    let (mut wifi_controller, interfaces) = esp_wifi::wifi::new(wifi_init, peripherals.WIFI)
-        .expect("Failed to initialize WIFI controller");
-
-
-    wifi_controller
-        .set_configuration(&esp_wifi::wifi::Configuration::Client(esp_wifi::wifi::ClientConfiguration {
-            ssid: ssid,
-            password: password,
-            ..Default::default()
-        }))
-        .unwrap();
-
-
-    wifi_controller.start().unwrap();
-
-    wifi_controller.connect().unwrap();
-
-    static RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
-    let resources: & 'static mut StackResources<4>  = RESOURCES.init(StackResources::new());
-
-    let (stack, runner) = embassy_net::new(
-        interfaces.sta,
-        embassy_net::Config::dhcpv4(Default::default()),
-        resources,
-        rng.clone().random() as u64,
-
-    );
-
-    println!("Done.");
-
-    print!("Web server...");
-
-    // Spawn the network runner (must be running for sockets to work)
-    spawner.spawn(net_task(runner)).unwrap();
-
-
-    match embassy_futures::select::select(
-        stack.wait_config_up(),
-        Timer::after(Duration::from_secs(15))
-    ).await {
-        embassy_futures::select::Either::First(_) => {
-
-        }
-        embassy_futures::select::Either::Second(_) => {
-            //todo: Figure out how to handle this error
-            panic!("WiFi could not resolve IP address");
-        }
-    }
-
-
-
-    let ip = stack.config_v4().unwrap().address;
-
-    println!("Done.");
-
-    println!("Network up. IPv4: {}", ip);
-
-
-    led_channel.send(RGBState::OneFlash(Color { r: 255, g: 0, b: 50 }, 50, 50)).await;
-
-    static MSG_CHNL: StaticCell<Channel<NoopRawMutex, Message, 1>> = StaticCell::new();
-    let message_channel: & 'static mut Channel<NoopRawMutex, Message, 1>  = MSG_CHNL.init(Channel::new());
-
-
-
-    static RET_CHNL: StaticCell<Channel<NoopRawMutex, String, 1>> = StaticCell::new();
-    let return_channel: & 'static mut Channel<NoopRawMutex, String, 1>  = RET_CHNL.init(Channel::new());
-
-    /* Get internet time */
-
-    print!("Get internet time...");
-    static TIME_MUTEX: StaticCell<Mutex<NoopRawMutex, RTC>> = StaticCell::new();
-    let time_mutex: & 'static mut Mutex<NoopRawMutex, RTC>  = TIME_MUTEX.init(Mutex::new(RTC::new()));
-
-    spawner.spawn(world_time_task(stack, time_mutex)).unwrap();
-
-    led_channel.send(RGBState::OneFlash(Color { r: 255, g: 0, b: 255 }, 200, 200)).await;
-
-    //Block the main thread until the internet time is resolved
-    loop {
-
-        {
-            let guard = time_mutex.lock().await;
-
-            if guard.date_time().is_some() {
-                break;
-            }
-        }
-
-        Timer::after(Duration::from_millis(100)).await;
-
-    }
 
     println!("Done.");
 
@@ -555,24 +448,167 @@ async fn main(spawner: Spawner) {
     let mut motor = {
 
         let p1 = peripherals.GPIO0;
-        let p2 = peripherals.GPIO2;
+        let p2 = peripherals.GPIO3;
         let p3 = peripherals.GPIO1;
-        let p4 = peripherals.GPIO3;
+        let p4 = peripherals.GPIO2;
 
-        Motor::new(p1, p2, p3, p4, 42)
+        Motor::new(p1, p2, p3, p4)
 
     };
 
     println!("Done.");
 
-    print!("Start Web server...");
-    spawner.spawn(server_task(stack, message_channel, return_channel)).unwrap();
+    /* Set up the wifi and web server */
 
-    println!("Done.");
+    print!("Wifi...");
+
+
+
+    static MSG_CHNL: StaticCell<Channel<NoopRawMutex, Message, 1>> = StaticCell::new();
+    let message_channel: & 'static mut Channel<NoopRawMutex, Message, 1>  = MSG_CHNL.init(Channel::new());
+
+    static RET_CHNL: StaticCell<Channel<NoopRawMutex, String, 1>> = StaticCell::new();
+    let return_channel: & 'static mut Channel<NoopRawMutex, String, 1>  = RET_CHNL.init(Channel::new());
+
+
+    static RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
+    let resources: & 'static mut StackResources<4>  = RESOURCES.init(StackResources::new());
+
+
+    static TIME_MUTEX: StaticCell<Mutex<NoopRawMutex, RTC>> = StaticCell::new();
+    let time_mutex: & 'static mut Mutex<NoopRawMutex, RTC>  = TIME_MUTEX.init(Mutex::new(RTC::new()));
+
+
+    led_channel.send(RGBState::OneFlash(Color { r: 0, g: 255, b: 255 }, 50, 50)).await;
+
+    let (ssid, password) = match storages::load_from_page(storages::WIFI_ADDRESS) {
+        Some((ssid, password)) => (ssid, password),
+        None => (String::new(), String::new())
+    };
+
+    let rng = Rng::new(peripherals.RNG);
+
+    let timer0 = SystemTimer::new(peripherals.SYSTIMER);
+    esp_hal_embassy::init(timer0.alarm0);
+
+    let timer1 = TimerGroup::new(peripherals.TIMG0);
+
+
+    static WIFI_INIT: StaticCell<esp_wifi::EspWifiController<'_>> = StaticCell::new();
+    let wifi_init = WIFI_INIT.init(esp_wifi::init(timer1.timer0, rng).unwrap());
+
+
+    let (mut wifi_controller, interfaces) = esp_wifi::wifi::new(wifi_init, peripherals.WIFI)
+        .unwrap();
+
+
+    {
+
+        let mac_address = interfaces.sta.mac_address();
+
+        wifi_controller
+            .set_configuration(&esp_wifi::wifi::Configuration::Client(esp_wifi::wifi::ClientConfiguration {
+                ssid: ssid,
+                password: password,
+                ..Default::default()
+            }))
+            .unwrap();
+
+        if let Ok(_) = wifi_controller.start() {
+
+
+            if let Ok(_) = wifi_controller.connect() {
+                let (stack, runner) = embassy_net::new(
+                    interfaces.sta,
+                    embassy_net::Config::dhcpv4(Default::default()),
+                    resources,
+                    rng.clone().random() as u64,
+                );
+
+                println!("Done.");
+
+                print!("Web server...");
+
+                // Spawn the network runner (must be running for sockets to work)
+                spawner.spawn(net_task(runner)).unwrap(); //Unrecoverable
+
+
+                if let First(_) = embassy_futures::select::select(
+                    stack.wait_config_up(),
+                    Timer::after(Duration::from_secs(15))
+                ).await {
+
+
+                    let ip = stack.config_v4().unwrap().address; //Safe
+
+                    println!("Done.");
+
+                    println!("Network up. IPv4: {}", ip);
+
+
+                    led_channel.send(RGBState::OneFlash(Color { r: 255, g: 0, b: 50 }, 50, 50)).await;
+
+                    /* Get internet time */
+
+                    print!("Get internet time...");
+
+                    spawner.spawn(world_time_task(stack, time_mutex)).unwrap(); //Unrecoverable
+
+                    led_channel.send(RGBState::OneFlash(Color { r: 255, g: 0, b: 255 }, 200, 200)).await;
+
+                    //Block the main thread until the internet time is resolved
+
+                    let time_api_start = Instant::now();
+
+                    loop {
+                        {
+                            let mut guard = time_mutex.lock().await;
+
+                            if guard.date_time().is_some() || time_api_start.elapsed().as_secs() > 20 {
+                                break;
+                            }
+                        }
+
+                        Timer::after(Duration::from_millis(100)).await;
+                    }
+
+                    println!("Done.");
+
+
+                    print!("Start Web server...");
+                    spawner.spawn(server_task(stack, message_channel, return_channel)).unwrap(); //Unrecoverable
+
+                    println!("Done.");
+
+                }
+
+
+            }
+        }
+
+    }
+
+    if !wifi_controller.is_connected().unwrap_or_else(|x| false) {
+        //If wifi is not working, warning
+        fsm.force_change(State::Warning(WarningType::WiFiError))
+    } else {
+        //If the wifi is working but there is no time, warning
+        let mut guard = time_mutex.lock().await;
+
+        if guard.date_time().is_none() {
+
+            fsm.force_change(State::Warning(WarningType::WorldTimeError))
+        }
+    }
+
+
+
 
     led_channel.send(RGBState::Solid(Color { r: 0, g: 255, b: 0 })).await;
 
     Timer::after(Duration::from_millis(500)).await;
+
+    println!("Main loop started");
 
     loop {
 
@@ -642,10 +678,21 @@ async fn main(spawner: Spawner) {
                         format!("Thermostat set to {}°C", thermo.thermostat())
                     },
                     Function::ReadTemperature => {
-                        format!("Temperature is {}°C", thermo.get_temperature())
+                        match thermo.get_temperature() {
+                            Ok(temperature) => {
+                                format!("Temperature is {}°C", temperature)
+                            }
+                            Err(e) => {
+                                format!("Temperature is unknown, sensor error - {:?}", e)
+                            }
+                        }
+
+
                     },
                     Function::GetMacAddress => {
-                        format!("Not Implemented")
+                        //format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                        //        mac_address[0], mac_address[1], mac_address[2], mac_address[3], mac_address[4], mac_address[5])
+                        format!("no")
                     },
                     Function::SoftReset => {
                         esp_hal::rom::software_reset();
@@ -665,7 +712,7 @@ async fn main(spawner: Spawner) {
                         let guard = time_mutex.lock().await;
 
                         if let Some(date_time) = guard.date_time() {
-                            format!("Time is {:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                            format!("Time is {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
                                    date_time.year(),
                                    date_time.month() as u32,
                                    date_time.day(),
@@ -681,6 +728,10 @@ async fn main(spawner: Spawner) {
                         fsm.request_change(fsm::State::Descale);
                         format!("Requesting descale - NOTE: this might not work if the device is in safe, calibrate or warning mode")
                     },
+                    Function::Rainbow => {
+                        fsm.request_change(fsm::State::Rainbow);
+                        format!("Requesting Rainbow")
+                    }
                     Function::Calibrate => {
                         fsm.request_change(fsm::State::Calibrate);
                         format!("Requesting descale - NOTE: this might not work if the device is in safe, calibrate or warning mode")
@@ -739,7 +790,7 @@ async fn main(spawner: Spawner) {
                         } else {
                             let mut str = String::new();
                             for slot in fsm.summer() {
-                                write!(str, "\n{}", slot);
+                                write!(str, "\n{}", slot).unwrap(); //Safe
                             }
                             str
                         }
@@ -750,7 +801,7 @@ async fn main(spawner: Spawner) {
                         } else {
                             let mut str = String::new();
                             for slot in fsm.winter() {
-                                write!(str, "\n{}", slot);
+                                write!(str, "\n{}", slot).unwrap(); //Safe
                             }
                             str
                         }
@@ -761,7 +812,7 @@ async fn main(spawner: Spawner) {
                         } else {
                             let mut str = String::new();
                             for slot in fsm.brightness() {
-                                write!(str, "\n{}", slot);
+                                write!(str, "\n{}", slot).unwrap(); //Safe
                             }
                             str
                         }
@@ -811,6 +862,68 @@ async fn main(spawner: Spawner) {
                         fsm.clear_brightness();
                         format!("Brightness schedule cleared")
                     }
+                    Function::RemoveSummerSlot(slot) => {
+                        if let Some(s) = ScheduleEntry::from_str(slot.as_str()) {
+
+                            if fsm.remove_summer(s).is_some() {
+                                format!("Removed summer slot")
+                            } else {
+                                format!("No such slot in summer schedule")
+                            }
+
+                        } else {
+                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
+                        }
+                    }
+                    Function::RemoveWinterSlot(slot) => {
+                        if let Some(s) = ScheduleEntry::from_str(slot.as_str()) {
+
+                            if fsm.remove_winter(s).is_some() {
+                                format!("Removed winter slot")
+                            } else {
+                                format!("No such slot in winter schedule")
+                            }
+
+                        } else {
+                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
+                        }
+                    }
+                    Function::RemoveBrightnessSlot(slot) => {
+                        if let Some(s) = BrightnessEntry::from_str(slot.as_str()) {
+
+                            if fsm.remove_brightness(s).is_some() {
+                                format!("Removed brightness slot")
+                            } else {
+                                format!("No such slot in brightness schedule")
+                            }
+
+                        } else {
+                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
+                        }
+                    }
+                    Function::StartPanic(confirm) => {
+                        if confirm == "PANIC" {
+                            panic!("User requested panic (via WiFi commands)");
+                        } else {
+                            format!("When requesting a panic the 'PANIC' string must be sent to confirm")
+                        }
+                    }
+                    Function::StartException(confirm) => {
+                        if confirm == "EXCEPTION" {
+                            unsafe {
+                                #[cfg(target_arch = "riscv32")]
+                                core::arch::asm!("unimp", options(noreturn));
+
+                                // Xtensa (ESP32-S2/S3). `ill` is an illegal-instruction trap.
+                                // If your toolchain doesn’t accept `ill`, use `.byte 0` repeatedly.
+                                core::arch::asm!("ill", options(noreturn))
+                                // Fallback for older xtensa assemblers:
+                                // core::arch::asm!(".byte 0, 0, 0", options(noreturn));
+                            }
+                        } else {
+                            format!("When requesting a panic the 'EXCEPTION' string must be sent to confirm")
+                        }
+                    }
 
 
                 };
@@ -843,9 +956,6 @@ async fn main(spawner: Spawner) {
                 mode_button::Action::Safe => {
                     fsm.request_change(fsm::State::SafeMode);
                 }
-                mode_button::Action::Reset => {
-                    esp_hal::rom::software_reset();
-                }
                 mode_button::Action::Retract => {
                     motor.calibrate_pull(7);
                 }
@@ -870,12 +980,29 @@ async fn main(spawner: Spawner) {
             let current_time = {
                 let guard = time_mutex.lock().await;
 
-                guard.date_time().unwrap()
+                guard.date_time()
             };
 
             match fsm.state() {
                 crate::fsm::State::Start => {
                     fsm.change_from_schedule(current_time);
+
+                    fsm.allow_request();
+                }
+                crate::fsm::State::Rainbow => {
+                    if state_just_changed || mode_button.just_released() {
+
+                        led_channel.send(RGBState::Rainbow(3000)).await;
+
+                        Timer::after(Duration::from_millis(100)).await; //Give the led thread time
+
+                    }
+
+                    if state_just_changed {
+
+                        mode_button.clear_actions();
+                        mode_button.push_action(mode_button::Action::Cancel);
+                    }
 
                     fsm.allow_request();
                 }
@@ -893,26 +1020,33 @@ async fn main(spawner: Spawner) {
                         mode_button.clear_actions();
                         mode_button.push_action(mode_button::Action::ShortBoost);
                         mode_button.push_action(mode_button::Action::LongBoost);
-                        mode_button.push_action(mode_button::Action::Calibrate);
                         mode_button.push_action(mode_button::Action::Safe);
-                        mode_button.push_action(mode_button::Action::Reset);
+                        mode_button.push_action(mode_button::Action::Calibrate);
 
                     }
 
-                    let actual = thermo.get_temperature();
                     let thermostat = thermo.thermostat();
 
-                    if actual < (thermostat - 0.25) {
-                        motor.open_valve();
+                    match thermo.get_temperature() {
+                        Ok(actual) => {
+
+                            if actual < (thermostat - 0.25) {
+                                motor.open_valve();
+                            }
+
+                            if actual > (thermostat + 0.25) {
+                                motor.close_valve();
+                            }
+
+                            fsm.change_from_schedule(current_time);
+
+                            fsm.allow_request();
+                        }
+                        Err(e) => {
+                            fsm.force_change(fsm::State::Warning(WarningType::TemperatureSensorError))
+                        }
                     }
 
-                    if actual > (thermostat + 0.25) {
-                        motor.close_valve();
-                    }
-
-                    fsm.change_from_schedule(current_time);
-
-                    fsm.allow_request();
                 }
                 crate::fsm::State::Off => {
 
@@ -930,9 +1064,8 @@ async fn main(spawner: Spawner) {
                         mode_button.clear_actions();
                         mode_button.push_action(mode_button::Action::ShortBoost);
                         mode_button.push_action(mode_button::Action::LongBoost);
-                        mode_button.push_action(mode_button::Action::Calibrate);
                         mode_button.push_action(mode_button::Action::Safe);
-                        mode_button.push_action(mode_button::Action::Reset);
+                        mode_button.push_action(mode_button::Action::Calibrate);
                     }
 
                     fsm.change_from_schedule(current_time);
@@ -955,9 +1088,8 @@ async fn main(spawner: Spawner) {
 
                         mode_button.clear_actions();
                         mode_button.push_action(mode_button::Action::Cancel);
-                        mode_button.push_action(mode_button::Action::Calibrate);
                         mode_button.push_action(mode_button::Action::Safe);
-                        mode_button.push_action(mode_button::Action::Reset);
+                        mode_button.push_action(mode_button::Action::Calibrate);
                     }
 
                     if time_started.elapsed() > *duration {
@@ -980,7 +1112,6 @@ async fn main(spawner: Spawner) {
                         mode_button.clear_actions();
                         mode_button.push_action(mode_button::Action::Retract);
                         mode_button.push_action(mode_button::Action::ZeroUnlock);
-                        mode_button.push_action(mode_button::Action::Reset);
                     }
 
                     //FSM may only leave calibrate mode for warnings
@@ -1001,15 +1132,11 @@ async fn main(spawner: Spawner) {
 
 
                         mode_button.clear_actions();
-                        mode_button.push_action(mode_button::Action::Reset);
                     }
 
 
                     //FSM may only leave safe mode for warnings
                     fsm.handle_request(|state| state.is_warning());
-                }
-                crate::fsm::State::Reset => {
-                    esp_hal::rom::software_reset();
                 }
                 crate::fsm::State::Descale => {
 
@@ -1032,9 +1159,8 @@ async fn main(spawner: Spawner) {
                         mode_button.push_action(mode_button::Action::Cancel);
                         mode_button.push_action(mode_button::Action::ShortBoost);
                         mode_button.push_action(mode_button::Action::LongBoost);
-                        mode_button.push_action(mode_button::Action::Calibrate);
                         mode_button.push_action(mode_button::Action::Safe);
-                        mode_button.push_action(mode_button::Action::Reset);
+                        mode_button.push_action(mode_button::Action::Calibrate);
                     }
 
                     fsm.change_from_schedule(current_time);
@@ -1049,7 +1175,7 @@ async fn main(spawner: Spawner) {
                             color: Color { r: 255, g: 100, b: 0 },
                             fade_duration: 2000,
                             pause: 300,
-                            flash_count: *code,
+                            flash_count: code.warning_code(),
                             on_duration: 30,
                             off_duration: 270,
                             final_pause: 1000,

@@ -10,6 +10,12 @@ use serde::de::DeserializeOwned;
 use crate::flashstore::FlashStorage;
 
 const PAGE_SIZE: u32 = 4096;
+
+
+pub(crate) const SCHEDULE_ADDRESS: u32 = 995;
+pub(crate) const MOTOR_ADDRESS: u32 = 994;
+pub(crate) const THERMO_ADDRESS: u32 = 993;
+pub(crate) const WIFI_ADDRESS: u32 = 992;
 const POSITION_PAGE: u32 = 1022;
 
 
@@ -48,11 +54,6 @@ pub(crate) fn get_position() -> u32 {
     position
 }
 
-
-pub(crate) const SCHEDULE_ADDRESS: u32 = 995;
-pub(crate) const MOTOR_ADDRESS: u32 = 994;
-pub(crate) const THERMO_ADDRESS: u32 = 993;
-pub(crate) const WIFI_ADDRESS: u32 = 992;
 
 
 

@@ -1,14 +1,34 @@
 use alloc::vec::Vec;
 use core::fmt;
 use core::fmt::{Display, Formatter};
+use dht22_sensor::DhtError;
 use time::{OffsetDateTime, Weekday};
 use esp_hal::time::{Instant, Duration};
 use serde::{Serialize, Deserialize};
+use core::convert::Infallible;
 use crate::{fsm, storages};
 use crate::fsm::Variant::{Summer, Winter};
 use crate::storages::SCHEDULE_ADDRESS;
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum WarningType {
+    WiFiError,
+    WorldTimeError,
+    TemperatureSensorError,
+}
+
+impl WarningType {
+    pub(crate) fn warning_code(&self) -> u32 {
+        match &self {
+            WarningType::TemperatureSensorError => 3,
+            WarningType::WiFiError => 4,
+            WarningType::WorldTimeError => 5,
+
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum State {
     Start,
     Regulate,
@@ -16,9 +36,9 @@ pub(crate) enum State {
     Boost(Instant, Duration),
     Calibrate,
     SafeMode,
-    Reset,
     Descale,
-    Warning(u32),
+    Rainbow,
+    Warning(WarningType),
     Cancel,
 }
 
@@ -48,7 +68,7 @@ fn parse_time(s: &str) -> Option<u16> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub(crate) enum ScheduleState {
     Regulate,
     Off,
@@ -71,7 +91,7 @@ impl ScheduleState {
 
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub(super) struct ScheduleEntry {
     pub(super) day: Weekday,
     pub(super) start: u16,
@@ -141,7 +161,7 @@ impl Display for ScheduleEntry {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub(super) struct BrightnessEntry {
     pub(super) day: Weekday,
     pub(super) start: u16,
@@ -331,39 +351,58 @@ impl FSM {
         &self.state
     }
 
-    pub(super) fn get_state(&self, current_time: OffsetDateTime) -> fsm::State {
-        let schedule = {
-            match self.variant {
-                Variant::Summer => { &self.summer }
-                Variant::Winter => { &self.winter }
-            }
-        };
+    pub(super) fn get_state(&self, current_time: Option<OffsetDateTime>) -> fsm::State {
 
-        for slot in schedule {
-            if slot.is_in(current_time) {
-                return slot.mode.to_fsm_state();
+        match current_time {
+            Some(current_time) => {
+
+                let schedule = {
+                    match self.variant {
+                        Variant::Summer => { &self.summer }
+                        Variant::Winter => { &self.winter }
+                    }
+                };
+
+                for slot in schedule {
+                    if slot.is_in(current_time) {
+                        return slot.mode.to_fsm_state();
+                    }
+                }
+
+                //If there is no schedule entry then the default is Off
+                fsm::State::Off
+            }
+            None => {
+                //If there is no date/time, default to off (user can turn radiator on with boost)
+                State::Off
             }
         }
 
-        //If there is no schedule entry then the default is Off
-        fsm::State::Off
     }
 
-    pub(super) fn _get_brightness(&self, current_time: OffsetDateTime) -> u8 {
-        let schedule = &self.brightness;
+    pub(super) fn _get_brightness(&self, current_time: Option<OffsetDateTime>) -> u8 {
+        match current_time {
+            Some(current_time) => {
+                let schedule = &self.brightness;
 
-        for slot in schedule {
-            if slot.is_in(current_time) {
-                return slot.level;
+                for slot in schedule {
+                    if slot.is_in(current_time) {
+                        return slot.level;
+                    }
+                }
+
+                //If there is no schedule entry then the default is max brightness, 100
+                100
+            }
+            None => {
+                100
             }
         }
 
-        //If there is no schedule entry then the default is max brightness, 100
-        100
     }
 
 
-    pub(crate) fn change_from_schedule(&mut self, current_time: OffsetDateTime) {
+    pub(crate) fn change_from_schedule(&mut self, current_time: Option<OffsetDateTime>) {
 
         let sched_state = self.get_state(current_time);
 
@@ -375,7 +414,7 @@ impl FSM {
     }
 
 
-     pub(crate) fn get_brightness(& mut self, current_time: OffsetDateTime) -> Option<u8> {
+     pub(crate) fn get_brightness(& mut self, current_time: Option<OffsetDateTime>) -> Option<u8> {
 
         let brightness = self._get_brightness(current_time);
 
@@ -424,6 +463,33 @@ impl FSM {
     pub(crate) fn clear_brightness(&mut self) {
         self.brightness.clear();
         self.save();
+    }
+
+    pub(crate) fn remove_summer(&mut self, rem: ScheduleEntry) -> Option<()> {
+        if let Some(ind) = self.summer.iter().position(|x| *x == rem) {
+            self.summer.remove(ind);
+            Some(())
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn remove_winter(&mut self, rem: ScheduleEntry) -> Option<()> {
+        if let Some(ind) = self.winter.iter().position(|x| *x == rem) {
+            self.winter.remove(ind);
+            Some(())
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn remove_brightness(&mut self, rem: BrightnessEntry) -> Option<()> {
+        if let Some(ind) = self.brightness.iter().position(|x| *x == rem) {
+            self.brightness.remove(ind);
+            Some(())
+        } else {
+            None
+        }
     }
 
     pub(crate) fn summer(&self) -> &[ScheduleEntry] {

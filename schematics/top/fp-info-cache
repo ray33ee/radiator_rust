@@ -1,11 +1,4 @@
-24747898341076306
-8836
-DRV8836
-
-
-0
-13
-13
+24740876056641902
 Audio_Module
 Reverb_BTDR-1H
 Digital Reverberation Unit, http://www.belton.co.kr/inc/downfile.php?seq=17&file=pdf (footprint from http://www.uk-electronic.de/PDF/BTDR-1.pdf)
@@ -99518,45 +99511,24 @@ Varistor VF
 0
 2
 2
-connector
-SAMTEC-MMT-108-02-X-SH
-translated Allegro footprint
+custom
+AHT20
+
 
 0
-8
-8
-connector
+6
+6
+custom
 SAMTEC_CLT-104-02-F-D-BE-K-TR
 
 
 0
 8
 8
-esp32-s2
-WIFI-SMD_ESP32-MINI-1-N4
+custom
+SAMTEC_CLT-108-02-F-D-BE-K-TR
 
 
 0
-73
-65
-usb-c
-MICRO-USB-TH_U-MICRS05P-BF00
-
-
-0
-7
-6
-usb-c
-TYPE-C-SMD_918-468K2029Y50001
-
-
-0
-18
-15
-usb-c
-Untitled
-
-
-0
-0
-0
+16
+16

@@ -20,7 +20,7 @@ pub(crate) struct Motor<'a> {
 }
 
 impl<'a> Motor<'a> {
-    pub(crate) fn new<P1: OutputPin + 'a, P2: OutputPin + 'a, P3: OutputPin + 'a, P4: OutputPin + 'a>(p1: P1, p2: P2, p3: P3, p4: P4, max_position: u32) -> Self {
+    pub(crate) fn new<P1: OutputPin + 'a, P2: OutputPin + 'a, P3: OutputPin + 'a, P4: OutputPin + 'a>(p1: P1, p2: P2, p3: P3, p4: P4) -> Self {
 
         let op1 = Output::new(p1, Level::Low, OutputConfig::default());
         let op2 = Output::new(p2, Level::Low, OutputConfig::default());

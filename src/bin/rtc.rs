@@ -32,15 +32,15 @@ impl RTC {
         let iso = iso_string.as_bytes();
         let date = Date::from_calendar_date(
             to_u16(&iso[0..4]) as i32,
-            to_u8(&iso[5..7]).try_into().unwrap(),
+            to_u8(&iso[5..7]).try_into().unwrap(), //Safe - ISO month is always in range
             to_u8(&iso[8..10]),
-        ).unwrap();
+        ).unwrap(); //Safe - ISO date is always correct
 
         let time = Time::from_hms(
             to_u8(&iso[11..13]),
             to_u8(&iso[14..16]),
             to_u8(&iso[17..19]),
-        ).unwrap();
+        ).unwrap(); //Safe - ISO time is always correct
 
         let date_time = OffsetDateTime::new_utc(date, time);
 
@@ -56,7 +56,7 @@ impl RTC {
 
         if let Some(epoch) = &self.epoch {
             if let Some(instant) = &self.instant {
-                return Some(OffsetDateTime::from_unix_timestamp(*epoch + instant.elapsed().as_secs() as i64).unwrap());
+                return Some(OffsetDateTime::from_unix_timestamp(*epoch + instant.elapsed().as_secs() as i64).ok()?);
             }
         }
 

@@ -36,6 +36,24 @@ class DeviceGUI:
 
         # Function buttons with optional arg types
         functions = [
+
+            ("Add summer slot", "AddSummerSlot", str),
+            ("Add winter slot", "AddWinterSlot", str),
+            ("Add brightness slot", "AddBrightnessSlot", str),
+
+            ("Remove summer slot", "RemoveSummerSlot", str),
+            ("Remove winter slot", "RemoveWinterSlot", str),
+            ("Remove brightness slot", "RemoveBrightnessSlot", str),
+
+            ("Clear Summer Schedule", "ClearSummer"),
+            ("Clear winter Schedule", "ClearWinter"),
+            ("Clear brightness Schedule", "ClearBrightness"),
+
+            ("Show Summer Schedule", "GetSummer"),
+            ("Show winter Schedule", "GetWinter"),
+            ("Show brightness Schedule", "GetBrightness"),
+
+
             ("Unlock & Zero", "UnlockAndZero"),
             ("Get lock", "GetLock"),
             ("Get position", "GetPosition"),
@@ -54,6 +72,7 @@ class DeviceGUI:
             ("Enter Descale", "Descale"),
             ("Enter Calibrate", "Calibrate"),
             ("Enter Safe Mode", "SafeMode"),
+            ("Enter Rainbow!", "Rainbow"),
             ("Cancel", "Cancel"),
             ("Get state", "CurrentState"),
             ("Get boost duration", "GetBoostDuration"),
@@ -61,17 +80,10 @@ class DeviceGUI:
             ("Set long boost duration", "SetLongDuration", int),
             ("Change schedule", "SetVariant", str),
             ("Get schedule type", "GetVariant"),
-            ("Add summer slot", "AddSummerSlot", str),
-            ("Clear Summer Schedule", "ClearSummer"),
-            ("Show Summer Schedule", "GetSummer"),
 
-            ("Add winter slot", "AddWinterSlot", str),
-            ("Clear winter Schedule", "ClearWinter"),
-            ("Show winter Schedule", "GetWinter"),
+            ("PANIC!", "StartPanic", str),
+            ("EXCEPTION", "StartException", str),
 
-            ("Add brightness slot", "AddBrightnessSlot", str),
-            ("Clear brightness Schedule", "ClearBrightness"),
-            ("Show brightness Schedule", "GetBrightness"),
         ]
 
         # ----- 3-column grid layout for buttons -----

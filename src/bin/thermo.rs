@@ -1,10 +1,11 @@
 
 use esp_hal::gpio::OutputPin;
-use dht22_sensor::Dht22;
+use dht22_sensor::{Dht22, DhtError};
 use esp_hal::{
     delay::Delay,
     gpio::{DriveMode, Output, OutputConfig, Pull, Flex},
 };
+use core::convert::Infallible;
 
 pub(crate) struct Thermometer<'a> {
     sensor: Dht22<Flex<'a>, Delay>,
@@ -40,17 +41,21 @@ impl<'a> Thermometer<'a> {
 
     }
 
-    pub(crate) fn get_temperature(&mut self) -> f32 {
+    pub(crate) fn get_temperature(&mut self) -> Result<f32, ()> {
 
         match self.sensor.read() {
             Ok(reading) => {
                 self.last_read = Some(reading.temperature);
             },
             Err(_) => {
+                //If the read failed and there is no backup value:
+                if self.last_read.is_none() {
+                    return Err(());
+                }
             },
         }
 
-        self.last_read.unwrap()
+        Ok(self.last_read.unwrap())
     }
 
     pub(crate) fn thermostat(&self) -> f32 {

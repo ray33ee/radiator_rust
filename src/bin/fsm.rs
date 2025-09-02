@@ -1,11 +1,9 @@
 use alloc::vec::Vec;
 use core::fmt;
 use core::fmt::{Display, Formatter};
-use dht22_sensor::DhtError;
 use time::{OffsetDateTime, Weekday};
 use esp_hal::time::{Instant, Duration};
 use serde::{Serialize, Deserialize};
-use core::convert::Infallible;
 use crate::{fsm, storages};
 use crate::fsm::Variant::{Summer, Winter};
 use crate::storages::SCHEDULE_ADDRESS;
@@ -414,7 +412,7 @@ impl FSM {
     }
 
 
-     pub(crate) fn get_brightness(& mut self, current_time: Option<OffsetDateTime>) -> Option<u8> {
+     pub(crate) fn get_brightness_changed(& mut self, current_time: Option<OffsetDateTime>) -> Option<u8> {
 
         let brightness = self._get_brightness(current_time);
 
@@ -424,6 +422,10 @@ impl FSM {
         } else {
             None
         }
+    }
+
+    pub(crate) fn get_brightness(& self) -> u8 {
+        self.stored_brightness
     }
 
     pub(crate) fn variant(&self) -> Variant {

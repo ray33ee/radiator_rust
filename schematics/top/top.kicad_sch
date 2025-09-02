@@ -4020,7 +4020,7 @@
 				)
 			)
 		)
-		(property "Value" "~"
+		(property "Value" "AHT20-F"
 			(at 201.93 41.91 0)
 			(effects
 				(font

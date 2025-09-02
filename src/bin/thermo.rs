@@ -1,11 +1,10 @@
 
 use esp_hal::gpio::OutputPin;
-use dht22_sensor::{Dht22, DhtError};
+use dht22_sensor::{Dht22};
 use esp_hal::{
     delay::Delay,
     gpio::{DriveMode, Output, OutputConfig, Pull, Flex},
 };
-use core::convert::Infallible;
 
 pub(crate) struct Thermometer<'a> {
     sensor: Dht22<Flex<'a>, Delay>,

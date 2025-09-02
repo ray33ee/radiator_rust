@@ -1,4 +1,3 @@
-use core::fmt::Display;
 use esp_println::println;
 use esp_hal::ledc::channel::{ChannelHW};
 use crate::{BLUE_REF, GREEN_REF, RED_REF};

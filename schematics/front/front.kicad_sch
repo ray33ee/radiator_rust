@@ -6219,7 +6219,7 @@
 	)
 	(global_label "HEART"
 		(shape input)
-		(at 173.99 143.51 180)
+		(at 173.99 138.43 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -6229,7 +6229,7 @@
 		)
 		(uuid "6bc05dc2-24e1-4b76-928d-81a0dbbb93f1")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 165.1991 143.51 0)
+			(at 165.1991 138.43 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6659,7 +6659,7 @@
 	)
 	(global_label "HEART"
 		(shape input)
-		(at 228.6 102.87 180)
+		(at 228.6 95.25 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -6669,7 +6669,7 @@
 		)
 		(uuid "a7e6b38d-c144-4fa6-989d-6fda8481f1f5")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 219.8091 102.87 0)
+			(at 219.8091 95.25 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6703,7 +6703,7 @@
 	)
 	(global_label "EXCEPTION"
 		(shape input)
-		(at 173.99 138.43 180)
+		(at 173.99 143.51 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -6713,7 +6713,7 @@
 		)
 		(uuid "b6bbba45-c36e-4d57-9541-ffa0e90388de")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 160.7239 138.43 0)
+			(at 160.7239 143.51 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6747,7 +6747,7 @@
 	)
 	(global_label "EXCEPTION"
 		(shape input)
-		(at 228.6 95.25 180)
+		(at 228.6 102.87 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -6757,7 +6757,7 @@
 		)
 		(uuid "bc44ac98-5f25-48de-84c7-eb9b39f85b2b")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 215.3339 95.25 0)
+			(at 215.3339 102.87 0)
 			(effects
 				(font
 					(size 1.27 1.27)

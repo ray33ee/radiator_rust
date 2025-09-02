@@ -1,4 +1,4 @@
-24735605853036833
+24739119483663465
 Audio_Module
 Reverb_BTDR-1H
 Digital Reverberation Unit, http://www.belton.co.kr/inc/downfile.php?seq=17&file=pdf (footprint from http://www.uk-electronic.de/PDF/BTDR-1.pdf)
@@ -99511,3 +99511,17 @@ Varistor VF
 0
 2
 2
+custom
+SAMTEC-MMT-104-02-X-DH
+translated Allegro footprint
+
+0
+8
+8
+custom
+USB-C-SMD_TYPE-C-31-M-13
+
+
+0
+20
+17

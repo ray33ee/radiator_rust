@@ -45,16 +45,16 @@ class DeviceGUI:
             ("Remove winter slot", "RemoveWinterSlot", str),
             ("Remove brightness slot", "RemoveBrightnessSlot", str),
 
-            ("Clear Summer Schedule", "ClearSummer"),
-            ("Clear winter Schedule", "ClearWinter"),
-            ("Clear brightness Schedule", "ClearBrightness"),
+            ("Clear Summer Schedule", "ClearSummer", str),
+            ("Clear winter Schedule", "ClearWinter", str),
+            ("Clear brightness Schedule", "ClearBrightness", str),
 
             ("Show Summer Schedule", "GetSummer"),
             ("Show winter Schedule", "GetWinter"),
             ("Show brightness Schedule", "GetBrightness"),
 
-
             ("Unlock & Zero", "UnlockAndZero"),
+            ("Lock", "Lock"),
             ("Get lock", "GetLock"),
             ("Get position", "GetPosition"),
             ("Calibrate push", "CalibratePush", int),

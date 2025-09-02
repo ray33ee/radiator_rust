@@ -92,7 +92,6 @@ use embassy_net::{
 };
 use smoltcp::wire::IpEndpoint;
 use core::fmt::Write;
-use esp_wifi::wifi::event::wifi_event_sta_connected_t;
 use crate::fsm::{State, WarningType};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -129,8 +128,11 @@ async fn world_time_task(
 
         let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
 
-        let world_time_api_dns = "192.168.1.111";
-        let world_time_api_port = 8080;
+        let world_time_api_dns = "worldtimeapi.org";
+        let world_time_api_port = 80;
+
+        //let world_time_api_dns = "192.168.1.111";
+        //let world_time_api_port = 8080;
 
         if let Ok(time_api_addrs) = stack.dns_query(world_time_api_dns, smoltcp::wire::DnsQueryType::A).await {
             if time_api_addrs.len() > 0 {
@@ -417,7 +419,7 @@ async fn main(spawner: Spawner) {
 
     let mut thermo = Thermometer::new(peripherals.GPIO9);
 
-    thermo.get_temperature();
+    let _ = thermo.get_temperature();
 
     println!("Done.");
 
@@ -608,6 +610,8 @@ async fn main(spawner: Spawner) {
 
     Timer::after(Duration::from_millis(500)).await;
 
+    let start_time = Instant::now();
+
     println!("Main loop started");
 
     loop {
@@ -645,6 +649,14 @@ async fn main(spawner: Spawner) {
                             format!("Device must be in calibrate mode for unlock to work")
                         }
                     },
+                    Function::Lock => {
+                        if fsm.state().is_calibrate() {
+                            storages::lock();
+                            format!("Locked motor")
+                        } else {
+                            format!("Device must be in calibrate mode for lock to work")
+                        }
+                    }
                     Function::GetLock => {
                         format!("Lock is {}", if storages::is_locked() { "locked" } else { "unlocked" })
                     },
@@ -828,9 +840,14 @@ async fn main(spawner: Spawner) {
                         }
 
                     }
-                    Function::ClearSummer => {
-                        fsm.clear_summer();
-                        format!("Summer schedule cleared")
+                    Function::ClearSummer(confirm) => {
+
+                        if confirm == "CLEAR" {
+                            fsm.clear_summer();
+                            format!("Summer schedule cleared")
+                        } else {
+                            format!("Please send 'CLEAR' confirmation to erase schedule")
+                        }
                     }
                     Function::AddWinterSlot(slot) => {
 
@@ -843,9 +860,14 @@ async fn main(spawner: Spawner) {
                         }
 
                     }
-                    Function::ClearWinter => {
-                        fsm.clear_winter();
-                        format!("Winter schedule cleared")
+                    Function::ClearWinter(confirm) => {
+
+                        if confirm == "CLEAR" {
+                            fsm.clear_winter();
+                            format!("Winter schedule cleared")
+                        } else {
+                            format!("Please send 'CLEAR' confirmation to erase schedule")
+                        }
                     }
                     Function::AddBrightnessSlot(slot) => {
 
@@ -858,9 +880,16 @@ async fn main(spawner: Spawner) {
                         }
 
                     }
-                    Function::ClearBrightness => {
-                        fsm.clear_brightness();
-                        format!("Brightness schedule cleared")
+                    Function::ClearBrightness(confirm) => {
+
+                        if confirm == "CLEAR" {
+                            fsm.clear_brightness();
+                            format!("Brightness schedule cleared")
+                        } else {
+                            format!("Please send 'CLEAR' confirmation to erase schedule")
+                        }
+
+
                     }
                     Function::RemoveSummerSlot(slot) => {
                         if let Some(s) = ScheduleEntry::from_str(slot.as_str()) {
@@ -923,6 +952,28 @@ async fn main(spawner: Spawner) {
                         } else {
                             format!("When requesting a panic the 'EXCEPTION' string must be sent to confirm")
                         }
+                    }
+                    Function::GetLEDBrightness => {
+                        format!("LED brightness is {}%", fsm.get_brightness())
+                    }
+                    Function::GetUpTime => {
+                        let up_time = start_time.elapsed().as_secs();
+                        let dur = time::Duration::seconds(up_time as i64);
+
+                        if dur.whole_days() == 0 {
+                            if dur.whole_hours() == 0 {
+                                if dur.whole_minutes() == 0 {
+                                    format!("Uptime is {} seconds.", dur.whole_seconds())
+                                } else {
+                                    format!("Uptime is {} minutes and {} seconds.", dur.whole_minutes(), dur.whole_seconds())
+                                }
+                            } else {
+                                format!("Uptime is {} hours, {} minutes and {} seconds.", dur.whole_hours(), dur.whole_minutes(), dur.whole_seconds())
+                            }
+                        } else {
+                            format!("Uptime is {} days, {} hours, {} minutes and {} seconds.", dur.whole_days(), dur.whole_hours(), dur.whole_minutes(), dur.whole_seconds())
+                        }
+
                     }
 
 
@@ -1203,7 +1254,7 @@ async fn main(spawner: Spawner) {
                 }
             }
 
-            if let Some(brightness) = fsm.get_brightness(current_time) {
+            if let Some(brightness) = fsm.get_brightness_changed(current_time) {
                 println!("Brightness: {}", brightness);
                 brightness_channel.send(brightness).await;
             }

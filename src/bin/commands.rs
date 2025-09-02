@@ -6,6 +6,7 @@ use serde::{Serialize, Deserialize};
 pub(crate) enum Function {
 
     UnlockAndZero,
+    Lock,
     GetLock,
     GetPosition,
     CalibratePush(u32),
@@ -39,13 +40,13 @@ pub(crate) enum Function {
     GetVariant,
 
     AddSummerSlot(String),
-    ClearSummer,
+    ClearSummer(String),
 
     AddWinterSlot(String),
-    ClearWinter,
+    ClearWinter(String),
 
     AddBrightnessSlot(String),
-    ClearBrightness,
+    ClearBrightness(String),
 
     GetSummer,
     GetWinter,
@@ -58,6 +59,9 @@ pub(crate) enum Function {
     StartPanic(String),
     StartException(String),
 
+    GetLEDBrightness,
+
+    GetUpTime,
 
 }
 

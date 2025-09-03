@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Radiator Controller • Settings</title>
+  <style>
+    :root {
+      --bg: #0f1216;
+      --panel: #151a21;
+      --card: #1b212a;
+      --text: #e7edf5;
+      --muted: #a9b3c1;
+      --accent: #5cc8ff;
+      --good: #31c48d;
+      --warn: #f7b500;
+      --bad: #f05252;
+      --border: #263041;
+      --shadow: 0 6px 18px rgba(0,0,0,0.25);
+      --radius: 16px;
+      --gap: 14px;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f7fafc;
+        --panel: #ffffff;
+        --card: #ffffff;
+        --text: #0f1720;
+        --muted: #425466;
+        --accent: #0ea5e9;
+        --border: #e5e7eb;
+        --shadow: 0 6px 18px rgba(0,0,0,0.08);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans";
+      background: linear-gradient(180deg, var(--bg), #0b0e12 60%);
+      color: var(--text);
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      grid-template-rows: 56px 1fr;
+      grid-template-areas:
+        "sidebar header"
+        "sidebar main";
+      min-height: 100vh;
+    }
+
+    /* Header */
+    .header {
+      grid-area: header;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 12px 0 10px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 3;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; }
+    .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+    .header .right { color: var(--muted); font-size: 13px; }
+
+    /* Sidebar */
+    .sidebar {
+      grid-area: sidebar;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 12px;
+      position: sticky; top: 0;
+      height: 100vh; overflow-y: auto;
+    }
+    .nav-group { margin: 8px 0 18px; }
+    .nav-title { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 12px 10px 8px; letter-spacing: .08em; }
+    .nav a { display: block; padding: 10px 12px; margin: 6px 0; border-radius: 10px; color: var(--text); text-decoration: none; border: 1px solid transparent; }
+    .nav a:hover { border-color: var(--border); background: rgba(92,200,255,0.08); }
+    .nav a.active { background: rgba(92,200,255,0.14); border-color: var(--accent); }
+    .nav .sub { margin-left: 8px; padding-left: 8px; border-left: 1px dashed var(--border); }
+
+    /* Main */
+    .main { grid-area: main; padding: 14px; }
+
+    .cards {
+      display: grid; gap: var(--gap);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    @media (max-width: 1200px) { .cards { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+    @media (max-width: 700px)  { .cards { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 14px;
+    }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .label { font-size: 12px; color: var(--muted); letter-spacing: .02em; }
+    .value { font-size: 18px; font-weight: 700; margin-top: 4px; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 10px 14px;
+      border-radius: 10px; border: 1px solid var(--border);
+      background: var(--panel); color: var(--text);
+      font: inherit; cursor: pointer;
+      transition: transform .06s ease, background .15s ease, border .15s ease;
+    }
+    .btn:hover { background: rgba(92,200,255,0.08); border-color: var(--accent); }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { background: rgba(92,200,255,0.16); border-color: var(--accent); }
+    .btn-warn { background: rgba(247,181,0,0.12); border-color: rgba(247,181,0,0.5); }
+    .btn-danger { background: rgba(240,82,82,0.12); border-color: rgba(240,82,82,0.5); }
+
+    /* Sections */
+    .section { margin: 18px 0 8px; display: flex; align-items: center; justify-content: space-between; }
+    .section h2 { margin: 0; font-size: 16px; color: var(--muted); }
+
+    .danger {
+      border: 1px solid rgba(240,82,82,0.5);
+      background: linear-gradient(0deg, rgba(240,82,82,0.08), rgba(240,82,82,0.08)), var(--card);
+    }
+    .danger h3 { margin: 0 0 8px 0; color: var(--bad); }
+    .danger p { margin: 0 0 12px 0; color: var(--muted); }
+
+    /* Mobile sidebar toggle */
+    .menu-toggle { display: none; }
+    .hamburger {
+      display: none; width: 40px; height: 34px;
+      border-radius: 10px; border: 1px solid var(--border);
+      background: var(--panel); align-items: center; justify-content: center; cursor: pointer;
+    }
+    .hamburger span { width: 18px; height: 2px; background: var(--text); position: relative; display: block; }
+    .hamburger span::before, .hamburger span::after {
+      content: ""; position: absolute; left: 0; right: 0; height: 2px; background: var(--text);
+    }
+    .hamburger span::before { top: -6px; }
+    .hamburger span::after  { top: 6px; }
+
+    @media (max-width: 860px) {
+      .app {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "header"
+          "main";
+      }
+      .sidebar {
+        position: fixed; left: 0; top: 56px; bottom: 0;
+        width: 80%; max-width: 320px;
+        transform: translateX(-100%); transition: transform .2s ease;
+        box-shadow: 12px 0 24px rgba(0,0,0,.4); z-index: 4;
+      }
+      .hamburger { display: inline-flex; }
+      .menu-toggle:checked ~ .sidebar { transform: translateX(0); }
+      .menu-toggle:checked ~ .backdrop { opacity: 1; pointer-events: auto; }
+      .backdrop {
+        position: fixed; inset: 56px 0 0 0; background: rgba(0,0,0,.45);
+        opacity: 0; pointer-events: none; transition: opacity .2s ease; z-index: 3;
+      }
+    }
+
+    /* Inputs inside cards */
+    .card input[type="number"] {
+      flex: 1 1 auto;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+      min-width: 60px;
+    }
+
+    /* On focus, highlight like buttons */
+    .card input[type="number"]:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+
+    /* Settings-style layout (no cards) */
+    .settings {
+      display: flex;
+      flex-direction: column;
+      gap: var(--gap);
+      max-width: 860px;
+    }
+
+    .group {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .group > h3 {
+      margin: 0;
+      padding: 12px 14px;
+      font-size: 14px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      letter-spacing: .02em;
+    }
+
+    .item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+    }
+
+    .item + .item { border-top: 1px solid var(--border); }
+
+    .item .left { min-width: 0; }
+    .item .left .label { font-size: 12px; color: var(--muted); }
+    .item .left .value { font-size: 16px; font-weight: 600; margin-top: 2px; }
+
+    .item .right { display: inline-flex; gap: 8px; align-items: center; }
+
+    @media (max-width: 640px) {
+      .item { flex-direction: column; align-items: stretch; }
+      .item .right { justify-content: flex-end; }
+    }
+
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Mobile menu toggle -->
+    <input id="menu" type="checkbox" class="menu-toggle" />
+    <header class="header">
+      <label for="menu" class="hamburger" aria-label="Open navigation"><span></span></label>
+      <div class="brand">
+        <div class="dot" aria-hidden="true"></div>
+        <div>Radiator Controller</div>
+      </div>
+      <div class="right">
+        <span class="label">Settings</span>
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="nav">
+
+        <div class="nav-group">
+          <div class="nav-title">Main</div>
+          <a href="/" class="">Home</a>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">Controls</div>
+          <a href="/Thermostat:">Thermostat</a>
+          <a href="/Schedule:">Schedule</a>
+          <div class="sub">
+            <a href="/Summer:">Summer</a>
+            <a href="/Winter:">Winter</a>
+            <a href="/Brightness:">Brightness</a>
+          </div>
+          <a href="/calibrate">Calibrate</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-title">System</div>
+          <a href="/Network:">Network</a>
+          <a class="active" href="/Settings:">Settings</a>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Backdrop for mobile menu -->
+    <label for="menu" class="backdrop" aria-hidden="true"></label>
+
+    <!-- Main -->
+    <main class="main">
+    <div class="settings">
+      <!-- Device -->
+      <section class="group">
+        <h3>Device</h3>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Reset reason</div>
+            <div class="value" id="reset-reason">{{0}}</div>
+          </div>
+          <div class="right"></div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Time synchronization</div>
+            <div class="value">Sync device clock with client time</div>
+          </div>
+          <div class="right">
+            <form id="sync-form">
+              <button class="btn btn-primary" type="submit">Sync time</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Rainbow LED</div>
+            <div class="value">Cycle LED colours</div>
+          </div>
+          <div class="right">
+            <form id="rainbow-form">
+              <button class="btn btn-primary" type="submit">Start Rainbow</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- Boost -->
+      <section class="group">
+        <h3>Boost</h3>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Short boost duration (minutes)</div>
+            <div class="value">Set how long a short boost runs</div>
+          </div>
+          <div class="right">
+            <input type="number" id="short-boost-min" min="1" max="240" value="10" />
+            <form id="short-boost-form">
+              <button class="btn btn-primary" type="submit">Set</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Long boost duration (minutes)</div>
+            <div class="value">Set how long a long boost runs</div>
+          </div>
+          <div class="right">
+            <input type="number" id="long-boost-min" min="1" max="480" value="30" />
+            <form id="long-boost-form">
+              <button class="btn btn-primary" type="submit">Set</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- Danger zone -->
+      <section class="group danger">
+        <h3>Danger zone</h3>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Soft reset</div>
+            <div class="value">Restart firmware without power cycle</div>
+          </div>
+          <div class="right">
+            <form id="reset-form">
+              <button class="btn btn-warn" type="submit">Soft reset</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Panic</div>
+            <div class="value">Trigger panic handler</div>
+          </div>
+          <div class="right">
+            <form id="panic-form">
+              <button class="btn btn-danger" type="submit">Panic</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Exception</div>
+            <div class="value">Trigger test exception</div>
+          </div>
+          <div class="right">
+            <form id="exception-form">
+              <button class="btn btn-danger" type="submit">Exception</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- Safe -->
+      <section class="group danger">
+        <h3>Disable Motor</h3>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Safe Mode</div>
+            <div class="value">Put motor in safe mode for installing/uninstalling</div>
+          </div>
+          <div class="right">
+            <form id="safe-form">
+              <button class="btn btn-danger" type="submit">Safe Mode</button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    </main>
+  </div>
+
+  <script>
+    document.getElementById('sync-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const epoch = Math.floor(Date.now() / 1000);
+      const url = '/settings?sync_time=' + epoch;
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to sync time', err);
+      }
+    });
+
+    document.getElementById('reset-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '/settings?reset=true';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to reset', err);
+      }
+    });
+
+    document.getElementById('panic-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '/settings?panic=true';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to panic', err);
+      }
+    });
+
+    document.getElementById('exception-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '/settings?exception=true';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to throw exception', err);
+      }
+    });
+
+      // Rainbow
+    document.getElementById('rainbow-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      try {
+        await fetch('/settings?action=rainbow', { method: 'POST' });
+      } catch (err) { console.error('Failed to start rainbow', err); }
+    });
+
+    // Short boost duration
+    document.getElementById('short-boost-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const mins = parseInt(document.getElementById('short-boost-min').value, 10) || 0;
+      try {
+        await fetch('/settings?short_duration=' + encodeURIComponent(mins), { method: 'POST' });
+      } catch (err) { console.error('Failed to set short boost', err); }
+    });
+
+    // Long boost duration
+    document.getElementById('long-boost-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const mins = parseInt(document.getElementById('long-boost-min').value, 10) || 0;
+      try {
+        await fetch('/settings?long_duration=' + encodeURIComponent(mins), { method: 'POST' });
+      } catch (err) { console.error('Failed to set long boost', err); }
+    });
+
+    // Safe mode
+    document.getElementById('safe-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      try {
+        await fetch('/settings?action=safemode', { method: 'POST' });
+      } catch (err) { console.error('Failed to safe mode', err); }
+    });
+
+
+  </script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+Create a dashboard style template html for a radiator controller which can display the following information: 
+
+- current temperature
+- Thermostat reading
+- Schedule type (Summer or Winter)
+- Device time
+- Up time 
+- Device state - one of:
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum State {
+    Start,
+    Regulate,
+    Off,
+    Boost(Instant, Duration),
+    Calibrate,
+    SafeMode,
+    Descale,
+    Rainbow,
+    Warning(WarningType),
+    Cancel,
+}
+- Valve state - Open or Closed.
+
+It must also have a panel on the left with the following links (which link to /TITLE:)
+- Thermostat
+- Schedule
+ - Summer
+ - Winter
+ - Brightness
+- Calibrate
+- Network
+- Settings
+
+NOTE: THis webpage MUST render in mobile mode too

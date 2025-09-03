@@ -84,6 +84,9 @@ class DeviceGUI:
             ("PANIC!", "StartPanic", str),
             ("EXCEPTION", "StartException", str),
 
+            ("Show Brightness", "GetLEDBrightness"),
+            ("Get Up time", "GetUpTime"),
+
         ]
 
         # ----- 3-column grid layout for buttons -----

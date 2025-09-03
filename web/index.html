@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Radiator Controller • Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Mobile menu toggle -->
+    <input id="menu" type="checkbox" class="menu-toggle" />
+    <header class="header">
+      <label for="menu" class="hamburger" aria-label="Open navigation"><span></span></label>
+      <div class="brand">
+        <div class="dot" aria-hidden="true"></div>
+        <div>Radiator Controller</div>
+      </div>
+      <div class="right">
+        <span class="badge ok" title="Connection status">Online</span>
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="nav">
+
+        <div class="nav-group">
+          <div class="nav-title">Main</div>
+          <a href="/" class="">Home</a>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">Controls</div>
+          <a href="/Thermostat:" class="">Thermostat</a>
+          <a href="/Schedule:" class="">Schedule</a>
+          <div class="sub">
+            <a href="/Summer:" class="">Summer</a>
+            <a href="/Winter:" class="">Winter</a>
+            <a href="/Brightness:" class="">Brightness</a>
+          </div>
+          <a href="/calibrate" class="">Calibrate</a>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">System</div>
+          <a href="/Network:" class="">Network</a>
+          <a href="/settings" class="">Settings</a>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Backdrop for mobile menu -->
+    <label for="menu" class="backdrop" aria-hidden="true"></label>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="cards">
+        <!-- Current Temperature -->
+        <section class="card">
+          <div class="icon">°C</div>
+          <div class="meta">
+            <div class="label">Current Temperature</div>
+            <div class="value">{{0}}&nbsp;°C</div>
+          </div>
+          <span class="badge ok">Stable</span>
+        </section>
+
+        <!-- Thermostat Reading -->
+        <section class="card">
+          <div class="icon">T</div>
+          <div class="meta">
+            <div class="label">Thermostat Reading</div>
+            <div class="value">{{1}}&nbsp;°C</div>
+          </div>
+          <span class="badge warn">±0.5</span>
+        </section>
+
+        <!-- Boost -->
+        <section class="card">
+          <div class="icon">🔥</div>
+          <div class="meta">
+            <div class="label">Boost</div>
+            <div class="value">Boost</div>
+            <div style="margin-top: 10px; display: flex; gap: 8px;">
+              <form id="short-form" method="post">
+                <button class="btn btn-primary" type="submit">Short</button>
+              </form>
+              <form id="long-form" method="post">
+                <button class="btn btn-primary" type="submit">Long</button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <!-- Boost -->
+        <section class="card">
+          <div class="icon">🔥</div>
+          <div class="meta">
+            <div class="label">Cancel</div>
+            <div class="value">Cancel</div>
+            <div style="margin-top: 10px; display: flex; gap: 8px;">
+              <form id="cancel-form" method="post">
+                <button class="btn btn-primary" type="submit">Cancel</button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <!-- Schedule Type -->
+        <section class="card">
+          <div class="icon">S</div>
+          <div class="meta">
+            <div class="label">Schedule Type</div>
+            <div class="value">{{2}}</div>
+          </div>
+          <span class="badge">{{3}}</span>
+        </section>
+
+        <!-- Device Time -->
+        <section class="card">
+          <div class="icon">⏰</div>
+          <div class="meta">
+            <div class="label">Device Time</div>
+            <div class="value">{{4}}</div>
+          </div>
+          <span class="badge">UTC</span>
+        </section>
+
+        <!-- Up Time -->
+        <section class="card">
+          <div class="icon">⏱</div>
+          <div class="meta">
+            <div class="label">Up Time</div>
+            <div class="value">{{5}}</div>
+          </div>
+          <span class="badge">OK</span>
+        </section>
+
+        <!-- Device State -->
+        <section class="card">
+          <div class="icon">⚙︎</div>
+          <div class="meta">
+            <div class="label">Device State</div>
+            <div class="value">{{6}}</div>
+          </div>
+          <span class="badge ok">Nominal</span>
+        </section>
+
+        <!-- Valve State -->
+        <section class="card">
+          <div class="icon">V</div>
+          <div class="meta">
+            <div class="label">Valve</div>
+            <div class="value">{{7}}</div>
+          </div>
+          <span class="badge ok">Flowing</span>
+        </section>
+      </div>
+
+    </main>
+  </div>
+
+
+  <!-- Fixes FOUC in firefox, see https://stackoverflow.com/questions/21147149/flash-of-unstyled-content-fouc-in-firefox-only-is-ff-slow-renderer -->    
+  <script>0</script>
+
+  <script>
+    document.getElementById('short-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '?boost=short';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to short boost', err);
+      }
+    });
+
+    document.getElementById('long-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '?boost=long';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to long boost', err);
+      }
+    });
+
+    document.getElementById('cancel-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '?action=cancel';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to cancel', err);
+      }
+    });
+
+
+  </script>
+
+</body>
+</html>

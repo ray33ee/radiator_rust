@@ -40,7 +40,22 @@ pub(crate) enum State {
     Cancel,
 }
 
-
+impl Display for State {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match &self {
+            State::Start => { write!(f, "Start") },
+            State::Regulate => { write!(f, "Regulate") }
+            State::Off => { write!(f, "Off") }
+            State::Boost(_, _) => { write!(f, "Boost") }
+            State::Calibrate => { write!(f, "Calibrate") }
+            State::SafeMode => { write!(f, "SafeMode") }
+            State::Descale => { write!(f, "Descale") }
+            State::Rainbow => { write!(f, "Rainbow") }
+            State::Warning(_) => { write!(f, "Warning") }
+            State::Cancel => { write!(f, "Cancel") }
+        }
+    }
+}
 
 fn parse_day(s: &str) -> Option<Weekday> {
     match s {

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Radiator Controller • Calibrate</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    /* Settings-style layout (for calibrate page too) */
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  max-width: 860px;
+}
+
+.group {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.group > h3 {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  letter-spacing: .02em;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.item + .item { border-top: 1px solid var(--border); }
+
+.item .left { min-width: 0; }
+.item .left .label { font-size: 12px; color: var(--muted); }
+.item .left .value { font-size: 16px; font-weight: 600; margin-top: 2px; }
+
+.item .right {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.item .right form { margin: 0; }
+
+@media (max-width: 640px) {
+  .item { flex-direction: column; align-items: stretch; }
+  .item .right { justify-content: flex-end; }
+}
+
+/* Inputs inside settings items */
+.item input[type="number"] {
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  min-width: 60px;
+}
+
+.item input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Mobile menu toggle -->
+    <input id="menu" type="checkbox" class="menu-toggle" />
+
+    <header class="header">
+      <label for="menu" class="hamburger" aria-label="Open navigation"><span></span></label>
+      <div class="brand">
+        <div class="dot" aria-hidden="true"></div>
+        <div>Radiator Controller</div>
+      </div>
+      <div class="right">
+        <span class="label">Calibrate</span>
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="nav">
+        <div class="nav-group">
+          <div class="nav-title">Main</div>
+          <a href="/">Home</a>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">Controls</div>
+          <a href="/Thermostat:">Thermostat</a>
+          <a href="/Schedule:">Schedule</a>
+          <div class="sub">
+            <a href="/Summer:">Summer</a>
+            <a href="/Winter:">Winter</a>
+            <a href="/Brightness:">Brightness</a>
+          </div>
+          <a class="active" href="/calibrate">Calibrate</a>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">System</div>
+          <a href="/Network:">Network</a>
+          <a href="/settings">Settings</a>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Backdrop for mobile menu -->
+    <label for="menu" class="backdrop" aria-hidden="true"></label>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="settings">
+        <section class="group">
+          <h3>Calibration</h3>
+
+          <!-- Calibrate mode -->
+          <div class="item">
+            <div class="left">
+              <div class="label">Calibrate mode</div>
+              <div class="value">Enable manual motor control</div>
+            </div>
+            <div class="right">
+              <form id="cal-mode-form">
+                <button class="btn btn-primary" type="submit">Enter Calibrate Mode</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Max position (label) -->
+          <div class="item">
+            <div class="left">
+              <div class="label">Max position</div>
+              <div class="value" id="max-pos">{{0}}</div>
+            </div>
+            <div class="right"></div>
+          </div>
+
+          <!-- Lock status (label) -->
+          <div class="item">
+            <div class="left">
+              <div class="label">Lock status</div>
+              <div class="value" id="lock-status">{{1}}</div>
+            </div>
+            <div class="right"></div>
+          </div>
+
+          <!-- Current position (label) -->
+          <div class="item">
+            <div class="left">
+              <div class="label">Current position</div>
+              <div class="value" id="cur-pos">{{2}}</div>
+            </div>
+            <div class="right"></div>
+          </div>
+
+          <!-- Set max -->
+          <div class="item">
+            <div class="left">
+              <div class="label">Set max (steps)</div>
+              <div class="value">Define mechanical maximum</div>
+            </div>
+            <div class="right">
+              <input type="number" id="set-max-input" min="1" max="1000" value="40" />
+              <form id="set-max-form">
+                <button class="btn btn-primary" type="submit">Set max</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Push / Pull -->
+          <div class="item">
+            <div class="left">
+              <div class="label">Manual move</div>
+              <div class="value">Jog motor to find limits</div>
+            </div>
+            <div class="right">
+              <form id="push-form">
+                <button class="btn btn-primary" type="submit">Calibrate Push</button>
+              </form>
+              <form id="pull-form">
+                <button class="btn btn-primary" type="submit">Calibrate Pull</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Lock / Unlock+Zero -->
+          <div class="item">
+            <div class="left">
+              <div class="label">Locking</div>
+              <div class="value">Protect motor from undefined positions</div>
+            </div>
+            <div class="right">
+              <form id="lock-form">
+                <button class="btn btn-warn" type="submit">Lock</button>
+              </form>
+              <form id="unlock-zero-form">
+                <button class="btn btn-danger" type="submit">Unlock &amp; Zero</button>
+              </form>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // All requests are POSTs with query flags; page stays put.
+    document.getElementById('cal-mode-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await fetch('/calibrate?action=calibrate', { method: 'POST' }); } catch(e){}
+    });
+
+    document.getElementById('set-max-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const v = parseInt(document.getElementById('set-max-input').value, 10) || 0;
+      try { await fetch('/calibrate?set_max=' + encodeURIComponent(v), { method: 'POST' }); } catch(e){}
+    });
+
+    document.getElementById('push-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await fetch('/calibrate?push=7', { method: 'POST' }); } catch(e){}
+    });
+
+    document.getElementById('pull-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await fetch('/calibrate?pull=7', { method: 'POST' }); } catch(e){}
+    });
+
+    document.getElementById('lock-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await fetch('/calibrate?action=lock', { method: 'POST' }); } catch(e){}
+    });
+
+    document.getElementById('unlock-zero-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await fetch('/calibrate?action=unlock_zero', { method: 'POST' }); } catch(e){}
+    });
+  </script>
+</body>
+</html>

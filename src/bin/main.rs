@@ -37,8 +37,9 @@ mod flashstore;
 use embassy_futures::select::Either::First;
 use esp_println::{println, print};
 use esp_backtrace as _;
-use alloc::format;
+use alloc::{format, vec};
 use alloc::string::String;
+use alloc::vec::Vec;
 use static_cell::StaticCell;
 use esp_wifi::wifi::WifiDevice;
 use esp_hal::{
@@ -92,7 +93,9 @@ use embassy_net::{
 };
 use smoltcp::wire::IpEndpoint;
 use core::fmt::Write;
+use time::OffsetDateTime;
 use crate::fsm::{State, WarningType};
+use crate::storages::is_locked;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -106,6 +109,12 @@ static mut GREEN_REF: Option<&'static mut esp_hal::ledc::channel::Channel<'stati
 
 static BLUE_CH: StaticCell<esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>> = StaticCell::new();
 static mut BLUE_REF: Option<&'static mut esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>> = None;
+
+
+static INDEX_HTML: &[u8] = core::include_bytes!("../../web/index.html");
+static SETTINGS_HTML: &[u8] = core::include_bytes!("../../web/settings.html");
+static CALIBRATE_HTML: &[u8] = core::include_bytes!("../../web/calibrate.html");
+static STYLES_CSS: &[u8] = core::include_bytes!("../../web/styles.css");
 
 
 #[embassy_executor::task]
@@ -128,11 +137,11 @@ async fn world_time_task(
 
         let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
 
-        let world_time_api_dns = "worldtimeapi.org";
-        let world_time_api_port = 80;
+        //let world_time_api_dns = "worldtimeapi.org";
+        //let world_time_api_port = 80;
 
-        //let world_time_api_dns = "192.168.1.111";
-        //let world_time_api_port = 8080;
+        let world_time_api_dns = "192.168.1.111";
+        let world_time_api_port = 8080;
 
         if let Ok(time_api_addrs) = stack.dns_query(world_time_api_dns, smoltcp::wire::DnsQueryType::A).await {
             if time_api_addrs.len() > 0 {
@@ -150,21 +159,22 @@ Connection: close\r\n\
 \r\n").await        {
                         let result_got_time = socket.read_with(|bytes| {
 
-                            if let Some(body_begin) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-                                if let Some(body_end) = &bytes[body_begin+4..].iter().position(|&b| b == b'}') {
-                                    let json_str = core::str::from_utf8(&bytes[body_begin+4..*body_end + body_begin+5]).unwrap();
+                            let mut headers = [httparse::EMPTY_HEADER; 40];
+
+                            let mut parser = httparse::Response::new(& mut headers);
+
+                            if let Ok(thing) = parser.parse(bytes) {
+                                if let httparse::Status::Complete(start) = thing {
+                                    let json_str = core::str::from_utf8(&bytes[start..]).unwrap();
 
                                     let parsed: serde_json::Value = serde_json::from_str(json_str).unwrap();
 
                                     let datetime_string = parsed.get("datetime").unwrap().as_str();
 
-
                                     return (bytes.len(), Some(RTC::epoch_from_iso(datetime_string.unwrap())));
-
 
                                 }
                             }
-
 
                             (bytes.len(), None)
 
@@ -285,7 +295,375 @@ async fn server_task(
     }
 }
 
+async fn send_css<'a>(socket: & mut TcpSocket<'a>) {
+    use embedded_io_async::Write;
 
+    socket.write_all(b"HTTP/1.1 ").await.unwrap();
+    socket.write_all(b"202 OK").await.unwrap();
+    socket.write_all(b"\r\nContent-Type: ").await.unwrap();
+    socket.write_all(b"text/css").await.unwrap();
+    socket.write_all(b"\r\nContent-Length: ").await.unwrap();
+    socket.write_all(format!("{}", STYLES_CSS.len()).as_bytes()).await.unwrap();
+    // cache CSS so reloads don’t flash
+    let _ = socket.write_all(b"\r\nCache-Control: public, max-age=604800").await;
+    socket.write_all(b"\r\nConnection: close\r\n\r\n").await.unwrap();
+    socket.write_all(STYLES_CSS).await.unwrap();
+}
+
+//todo: fix the length parameter so it matches the length of a templated file
+async fn send_template<'a, 'x>(mime: & str, template: & [u8], socket: & mut TcpSocket<'a>, replacer: & 'x alloc::vec::Vec<& 'x str>) {
+
+    use embedded_io_async::Write;
+
+
+    socket.write_all(b"HTTP/1.1 200 OK\r\n").await.unwrap();
+    socket.write_all(b"Content-Type: ").await.unwrap();
+    socket.write_all(mime.as_bytes()).await.unwrap();
+    socket.write_all(b"; charset=utf-8\r\n").await.unwrap();
+
+    // 2) Content length
+
+    let length = template.len() - (replacer.len() % 10) * 5 - (replacer.len() / 10) * 6 + replacer.iter().map(|&x| x.len()).sum::<usize>();
+
+    socket.write_all(b"Content-Length: ").await.unwrap();
+    socket.write_all(format!("{}", length).as_bytes()).await.unwrap();
+    socket.write_all(b"\r\n").await.unwrap();
+
+    // 3) Connection header
+    socket.write_all(b"Connection: close\r\n").await.unwrap();
+
+    // 4) End of headers
+    socket.write_all(b"\r\n").await.unwrap();
+
+    // 5) Body
+
+    let html_str = core::str::from_utf8(template).unwrap();
+
+    // First split at every `{{`
+    let mut parts = html_str.split("{{");
+
+    // The first chunk is always literal HTML
+    if let Some(first) = parts.next() {
+        socket.write_all(first.as_bytes()).await.unwrap();
+    }
+
+    // Every other chunk starts with a token (maybe) followed by "}}"
+    for part in parts {
+        if let Some((token, rest)) = part.split_once("}}") {
+            // (Don’t send the token itself for now)
+            let index = token.trim().parse::<usize>().unwrap();
+            socket.write_all(replacer[index].as_bytes()).await.unwrap();
+
+            socket.write_all(rest.as_bytes()).await.unwrap();
+        } else {
+            // No closing braces — treat as literal
+            socket.write_all(b"{{").await.unwrap();
+            socket.write_all(part.as_bytes()).await.unwrap();
+        }
+    }
+
+    //socket.write_all(INDEX_HTML).await.unwrap();
+}
+
+async fn send_404<'a>(socket: & mut TcpSocket<'a>) {
+    use embedded_io_async::Write;
+
+    let body = b"<!doctype html>\
+<html lang=\"en\">\
+<head><meta charset=\"utf-8\"><title>404 Not Found</title></head>\
+<body style=\"font-family:sans-serif; text-align:center; padding:2em;\">\
+  <h1>404 Not Found</h1>\
+  <p>The requested resource was not found on this server.</p>\
+</body></html>";
+
+    let _ = socket.write_all(b"HTTP/1.1 404 Not Found\r\n").await;
+    let _ = socket.write_all(b"Content-Type: text/html; charset=utf-8\r\n").await;
+    let _ = socket.write_all(b"Connection: close\r\n\r\n").await;
+    let _ = socket.write_all(body).await;
+}
+
+enum RequestMain {
+    GetStatus,
+    Reset,
+    Panic,
+    Exception,
+    ShortBoost,
+    LongBoost,
+    Cancel,
+    SetShortDuration(u32),
+    SetLongDuration(u32),
+    Rainbow,
+    CalibrateInfo,
+    ModeCalibrate,
+    ModeSafe,
+    SyncTime(i64),
+
+    SetMax(u32),
+    Push(u32),
+    Pull(u32),
+    UnlockZero,
+    Lock
+
+}
+
+enum ResponseMain {
+    Status{
+        temperature: Option<f32>,
+        thermostat: f32,
+        variant: fsm::Variant,
+        current_time: Option<OffsetDateTime>,
+        up_time: esp_hal::time::Instant,
+        current_state: fsm::State,
+        position: u32,
+    },
+    Motor {
+        max_position: u32,
+        is_locked: bool,
+        position: u32,
+    }
+
+}
+
+#[embassy_executor::task]
+async fn webserver_task(
+    stack: Stack<'static>,
+    request: &'static Channel<NoopRawMutex, RequestMain, 1>,
+    response: &'static Channel<NoopRawMutex, ResponseMain, 1>,
+) -> ! {
+    use httparse::{Request, EMPTY_HEADER};
+    use embedded_io_async::Write;
+
+    let mut rx_buf = [0u8; 3024];
+    let mut tx_buf = [0u8; 3024];
+
+    loop {
+        let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
+        socket.set_timeout(Some(Duration::from_secs(10)));
+
+        if let Err(e) = socket.accept(80).await {
+            println!("Accept failed: {:?}", e);
+            continue;
+        }
+
+        let mut buf = [0u8; 3024];
+
+        if let Ok(n) = socket.read(&mut buf).await {
+            if n != 0 {
+                // Try to parse the buffer as an HTTP request
+                let mut headers = [EMPTY_HEADER; 16];
+                let mut req = Request::new(&mut headers);
+
+                match req.parse(&buf[..n]) {
+                    Ok(status) if status.is_complete() => {
+                        let method = req.method.unwrap_or("<none>");
+                        let path = req.path.unwrap_or("<none>");
+
+                        let (path, key, value) = match path.split_once("?") {
+                            Some((path, query)) => {
+                                match query.split_once("=") {
+                                    Some((key, value)) => (path, Some(key), Some(value)),
+                                    None => (path, None, None),
+                                }
+                            }
+                            None => (path, None, None)
+                        };
+
+                        println!("Request found: {} {} ({:?} = {:?})", method, path, key, value);
+
+                        match (method, path) {
+                            ("GET", "/styles.css") => {
+
+                                send_css(& mut socket).await;
+
+                            }
+                            ("GET", "/") => {
+
+                                request.send(RequestMain::GetStatus).await;
+
+                                if let ResponseMain::Status { temperature, thermostat, variant, current_time, up_time, current_state, position } = response.receive().await {
+
+                                    let temperature = temperature.map(|t| format!("{}", t)).unwrap_or_else(|| format!("Error"));
+                                    let thermostat = format!("{:?}", thermostat);
+                                    let variant = format!("{:?}", variant);
+                                    let current_time = current_time.map(|t| format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.year(), t.month() as u32, t.day(), t.hour(), t.minute(), t.second())).unwrap_or_else(|| format!("Error"));
+                                    let current_state = format!("{}", current_state);
+                                    //todo: show extra information with state (warning code, boost duration. etc. add new cards)
+
+                                    //todo: automatically refresh on boost and cancel
+
+                                    let up_time = {
+                                        let tu = up_time.elapsed().as_secs();
+                                        let dur = time::Duration::seconds(tu as i64);
+
+                                        let days = dur.whole_seconds() / 86400;
+                                        let hours = (dur.whole_seconds() % 86_400) / 3_600;
+                                        let minutes = (dur.whole_seconds() % 3_600) / 60;
+                                        let seconds = dur.whole_seconds() % 60;
+
+                                        if days == 0 {
+                                            if hours == 0 {
+                                                if minutes == 0 {
+                                                    format!("{}s", seconds)
+                                                } else {
+                                                    format!("{}m {}s", minutes, seconds)
+                                                }
+                                            } else {
+                                                format!("{}h {}m {}s", hours, minutes, seconds)
+                                            }
+                                        } else {
+                                            format!("{}d {}h {}m {}s", days, hours, minutes, seconds)
+                                        }
+                                    };
+
+
+
+                                    let cards = vec![
+                                        temperature.as_str(),
+                                        thermostat.as_str(),
+                                        variant.as_str(),
+                                        "Active",
+                                        current_time.as_str(),
+                                        up_time.as_str(),
+                                        current_state.as_str(),
+                                        "Open" //Todo: implement the Open/close indication
+                                    ];
+
+
+                                    send_template("text/html", INDEX_HTML, & mut socket, &cards).await;
+                                } else {
+                                    send_404(& mut socket).await;
+                                }
+
+                            }
+                            ("POST", "/") => {
+                                match (key, value) {
+                                    (Some("boost"), Some("short")) => {
+                                        println!("Short boost");
+                                        request.send(RequestMain::ShortBoost).await;
+                                    }
+                                    (Some("boost"), Some("long")) => {
+                                        println!("Long boost");
+                                    }
+                                    (Some("action"), Some("cancel")) => {
+                                        println!("Cancel!");
+                                        request.send(RequestMain::Cancel).await;
+                                    }
+                                    _ => send_404(&mut socket).await,
+                                }
+                            }
+                            ("GET", "/settings") => {
+                                let cards = vec!["3"];
+
+
+                                send_template("text/html", SETTINGS_HTML, & mut socket, &cards).await;
+                            }
+                            ("POST", "/settings") => {
+                                match (key, value) {
+                                    (Some("sync_time"), Some(value)) => {
+                                        request.send(RequestMain::SyncTime(value.parse::<i64>().unwrap())).await;
+                                        println!("Also sync time: {}", value);
+                                    }
+                                    (Some("reset"), Some("true")) => {
+                                        request.send(RequestMain::Reset).await;
+                                        println!("Soft reset!");
+                                    }
+                                    (Some("panic"), Some("true")) => {
+                                        request.send(RequestMain::Panic).await;
+                                        println!("panic!");
+                                    }
+                                    (Some("exception"), Some("true")) => {
+                                        request.send(RequestMain::Exception).await;
+                                        println!("exception!");
+                                    }
+                                    (Some("action"), Some("rainbow")) => {
+                                        request.send(RequestMain::Rainbow).await;
+                                        println!("rainbow   !");
+                                    }
+                                    (Some("short_duration"), Some(duration)) => {
+                                        request.send(RequestMain::SetShortDuration(duration.parse::<u32>().unwrap())).await;
+                                        println!("Set short duration");
+                                    }
+                                    (Some("long_duration"), Some(duration)) => {
+                                        request.send(RequestMain::SetLongDuration(duration.parse::<u32>().unwrap())).await;
+                                        println!("Set long duration");
+                                    }
+                                    (Some("action"), Some("safemode")) => {
+                                        request.send(RequestMain::ModeSafe).await;
+                                        println!("Safe mode mode");
+                                    }
+
+                                    _ => send_404(&mut socket).await,
+                                }
+                            }
+                            ("GET", "/calibrate") => {
+                                request.send(RequestMain::CalibrateInfo).await;
+
+                                if let ResponseMain::Motor { max_position, is_locked, position } = response.receive().await {
+
+                                    let max = format!("{}", max_position);
+                                    let is_locked = format!("{}", if is_locked {"Locked"} else {"Unlocked"});
+                                    let pos = if position == 0xffffffff { format!("Undefined") } else { format!("{}", position) };
+
+                                    let cards = vec![max.as_str(), is_locked.as_str(), pos.as_str()];
+
+
+                                    send_template("text/html", CALIBRATE_HTML, & mut socket, &cards).await;
+                                } else {
+                                    send_404(& mut socket).await;
+                                }
+
+                            }
+                            ("POST", "/calibrate") => {
+                                match (key, value) {
+                                    (Some("action"), Some("calibrate")) => {
+                                        request.send(RequestMain::ModeCalibrate).await;
+                                    }
+                                    (Some("set_max"), Some(max)) => {
+                                        request.send(RequestMain::SetMax(max.parse::<u32>().unwrap())).await;
+                                    }
+                                    (Some("push"), Some(push)) => {
+                                        request.send(RequestMain::Push(push.parse::<u32>().unwrap())).await;
+                                    }
+                                    (Some("pull"), Some(pull)) => {
+                                        request.send(RequestMain::Push(pull.parse::<u32>().unwrap())).await;
+                                    }
+                                    (Some("action"), Some("lock")) => {
+                                        request.send(RequestMain::Lock).await;
+                                    }
+                                    (Some("action"), Some("unlock_zero")) => {
+                                        request.send(RequestMain::UnlockZero).await;
+                                    }
+
+                                    _ => send_404(&mut socket).await,
+                                }
+                            }
+                            _ => {
+                                println!("Unknown");
+                                send_404(&mut socket).await;
+                            }
+                        }
+
+
+
+                    }
+                    Ok(_) => {
+                        println!("Partial / incomplete HTTP request");
+                    }
+                    Err(e) => {
+                        println!("Invalid HTTP request: {:?}", e);
+                    }
+                }
+            }
+        }
+
+        // ... after sending headers + body:
+        let _ = socket.flush().await;
+        // give TCP time to drain multi-segment send
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(20)).await;
+        let _ = socket.close();
+
+    }
+}
 
 #[embassy_executor::task]
 async fn led_task(
@@ -503,6 +881,13 @@ async fn main(spawner: Spawner) {
     let (mut wifi_controller, interfaces) = esp_wifi::wifi::new(wifi_init, peripherals.WIFI)
         .unwrap();
 
+    static REQ_CHNL: StaticCell<Channel<NoopRawMutex, RequestMain, 1>> = StaticCell::new();
+    let request_channel: & 'static mut Channel<NoopRawMutex, RequestMain, 1>  = REQ_CHNL.init(Channel::new());
+
+
+    static RES_CHNL: StaticCell<Channel<NoopRawMutex, ResponseMain, 1>> = StaticCell::new();
+    let response_channel: & 'static mut Channel<NoopRawMutex, ResponseMain, 1>  = RES_CHNL.init(Channel::new());
+
 
     {
 
@@ -566,7 +951,7 @@ async fn main(spawner: Spawner) {
                         {
                             let mut guard = time_mutex.lock().await;
 
-                            if guard.date_time().is_some() || time_api_start.elapsed().as_secs() > 20 {
+                            if guard.date_time().is_some() || time_api_start.elapsed().as_secs() > 7 {
                                 break;
                             }
                         }
@@ -578,7 +963,7 @@ async fn main(spawner: Spawner) {
 
 
                     print!("Start Web server...");
-                    spawner.spawn(server_task(stack, message_channel, return_channel)).unwrap(); //Unrecoverable
+                    spawner.spawn(webserver_task(stack, request_channel, response_channel)).unwrap(); //Unrecoverable
 
                     println!("Done.");
 
@@ -615,6 +1000,109 @@ async fn main(spawner: Spawner) {
     println!("Main loop started");
 
     loop {
+
+
+
+        match request_channel.try_receive() {
+            Ok(request) => {
+                match request {
+                    RequestMain::ShortBoost => {
+
+                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(motor.short_boost() as u64)));
+                    }
+                    RequestMain::LongBoost => {
+
+                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(motor.long_boost() as u64)));
+                    }
+                    RequestMain::Cancel => {
+
+                        fsm.request_change(fsm::State::Cancel);
+                    }
+                    RequestMain::SetShortDuration(duration) => {
+                        motor.set_short_boost(duration);
+                    }
+                    RequestMain::SetLongDuration(duration) => {
+                        motor.set_long_boost(duration);
+                    }
+                    RequestMain::Rainbow => {
+                        fsm.request_change(fsm::State::Rainbow);
+                    }
+                    RequestMain::SyncTime(epoch) => {
+
+                        let mut guard = time_mutex.lock().await;
+
+                        guard.update_epoch(epoch);
+                    }
+                    RequestMain::CalibrateInfo => {
+                        response_channel.send(ResponseMain::Motor {
+                            max_position: motor.max_position(),
+                            is_locked: storages::is_locked(),
+                            position: storages::get_position(),
+                        }).await;
+                    }
+                    RequestMain::ModeSafe => {
+                        fsm.force_change(fsm::State::SafeMode);
+                    }
+                    RequestMain::ModeCalibrate => {
+                        fsm.force_change(fsm::State::Calibrate);
+                    }
+                    RequestMain::GetStatus => {
+
+
+                        let guard = time_mutex.lock().await;
+
+                        let status = ResponseMain::Status {
+                            temperature: thermo.get_temperature().ok(),
+                            current_state: fsm.state().clone(),
+                            position: storages::get_position(),
+                            current_time: guard.date_time(),
+                            up_time: start_time,
+                            thermostat: thermo.thermostat(),
+                            variant: fsm.variant(),
+                        };
+
+                        response_channel.send(status).await;
+
+                    }
+                    RequestMain::Reset => {
+                        esp_hal::rom::software_reset();
+                    }
+                    RequestMain::Panic => {
+                        panic!("User requested panic via web server")
+                    }
+                    RequestMain::Exception => {
+                        unsafe {
+                            #[cfg(target_arch = "riscv32")]
+                            core::arch::asm!("unimp", options(noreturn));
+
+                            // Xtensa (ESP32-S2/S3). `ill` is an illegal-instruction trap.
+                            // If your toolchain doesn’t accept `ill`, use `.byte 0` repeatedly.
+                            core::arch::asm!("ill", options(noreturn))
+                            // Fallback for older xtensa assemblers:
+                            // core::arch::asm!(".byte 0, 0, 0", options(noreturn));
+                        }
+                    }
+                    RequestMain::SetMax(pos) => {
+                        motor.set_max_position(pos);
+                    }
+                    RequestMain::Push(pos) => {
+                        motor.calibrate_push(pos);
+                    }
+                    RequestMain::Pull(pos) => {
+                        motor.calibrate_pull(pos);
+                    }
+                    RequestMain::UnlockZero => {
+                        storages::unlock_and_set_pos(0);
+                    }
+                    RequestMain::Lock => {
+                        storages::lock();
+                    }
+                }
+            }
+            Err(_) => {
+
+            }
+        }
 
 
         match message_channel.try_receive() {
@@ -960,18 +1448,23 @@ async fn main(spawner: Spawner) {
                         let up_time = start_time.elapsed().as_secs();
                         let dur = time::Duration::seconds(up_time as i64);
 
-                        if dur.whole_days() == 0 {
-                            if dur.whole_hours() == 0 {
-                                if dur.whole_minutes() == 0 {
-                                    format!("Uptime is {} seconds.", dur.whole_seconds())
+                        let days = dur.whole_seconds() / 86400;
+                        let hours = (dur.whole_seconds() % 86_400) / 3_600;
+                        let minutes = (dur.whole_seconds() % 3_600) / 60;
+                        let seconds = dur.whole_seconds() % 60;
+
+                        if days == 0 {
+                            if hours == 0 {
+                                if minutes == 0 {
+                                    format!("Uptime is {} seconds.", seconds)
                                 } else {
-                                    format!("Uptime is {} minutes and {} seconds.", dur.whole_minutes(), dur.whole_seconds())
+                                    format!("Uptime is {} minutes and {} seconds.", minutes, seconds)
                                 }
                             } else {
-                                format!("Uptime is {} hours, {} minutes and {} seconds.", dur.whole_hours(), dur.whole_minutes(), dur.whole_seconds())
+                                format!("Uptime is {} hours, {} minutes and {} seconds.", hours, minutes, seconds)
                             }
                         } else {
-                            format!("Uptime is {} days, {} hours, {} minutes and {} seconds.", dur.whole_days(), dur.whole_hours(), dur.whole_minutes(), dur.whole_seconds())
+                            format!("Uptime is {} days, {} hours, {} minutes and {} seconds.", days, hours, minutes, seconds)
                         }
 
                     }

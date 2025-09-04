@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Radiator Controller • Thermostat</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <style>
+    /* Settings-style layout (for calibrate page too) */
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  max-width: 860px;
+}
+
+.group {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.group > h3 {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  letter-spacing: .02em;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.item + .item { border-top: 1px solid var(--border); }
+
+.item .left { min-width: 0; }
+.item .left .label { font-size: 12px; color: var(--muted); }
+.item .left .value { font-size: 16px; font-weight: 600; margin-top: 2px; }
+
+.item .right {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.item .right form { margin: 0; }
+
+@media (max-width: 640px) {
+  .item { flex-direction: column; align-items: stretch; }
+  .item .right { justify-content: flex-end; }
+}
+
+/* Inputs inside settings items */
+.item input[type="number"] {
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  min-width: 60px;
+}
+
+.item input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Mobile menu toggle -->
+    <input id="menu" type="checkbox" class="menu-toggle" />
+
+    <header class="header">
+      <label for="menu" class="hamburger" aria-label="Open navigation"><span></span></label>
+      <div class="brand">
+        <div class="dot" aria-hidden="true"></div>
+        <div>Radiator Controller</div>
+      </div>
+      <div class="right">
+        <span class="label">Thermostat</span>
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="nav">
+        <div class="nav-group">
+          <div class="nav-title">Main</div>
+          <a href="/">Home</a>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">Controls</div>
+          <a class="active" href="/thermostat">Thermostat</a>
+          <a href="/thermostat">Schedule</a>
+          <div class="sub">
+            <a href="/summer">Summer</a>
+            <a href="/winter">Winter</a>
+            <a href="/brightness">Brightness</a>
+          </div>
+          <a href="/calibrate">Calibrate</a>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">System</div>
+          <a href="/network">Network</a>
+          <a href="/settings">Settings</a>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Backdrop for mobile menu -->
+    <label for="menu" class="backdrop" aria-hidden="true"></label>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="settings">
+        <section class="group">
+          <h3>Temperature Control</h3>
+
+          <!-- Set max -->
+          <div class="item">
+            <div class="left">
+              <div class="label">Temperature</div>
+              <div class="value">Thermostat temperature (°C)</div>
+            </div>
+            <div class="right">
+              <input type="number" id="set-thermo-input" min="1" max="1000" value="{{0}}" step="0.5" />
+              <form id="set-thermo-form">
+                <button class="btn btn-primary" type="submit">Set Thermostat</button>
+              </form>
+            </div>
+          </div>
+
+          
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // All requests are POSTs with query flags; page stays put.
+
+    document.getElementById('set-thermo-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const v = parseFloat(document.getElementById('set-thermo-input').value, 10) || 0;
+      try { await fetch('/thermostat?set_thermostat=' + encodeURIComponent(v), { method: 'POST' }); } catch(e){}
+    });
+  </script>
+</body>
+</html>

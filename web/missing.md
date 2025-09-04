@@ -1,0 +1,3 @@
+- Descale
+- Night mode button
+- Sync time work with local timezone

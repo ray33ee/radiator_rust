@@ -53,39 +53,39 @@ class DeviceGUI:
             ("Show winter Schedule", "GetWinter"),
             ("Show brightness Schedule", "GetBrightness"),
 
-            ("Unlock & Zero", "UnlockAndZero"),
-            ("Lock", "Lock"),
-            ("Get lock", "GetLock"),
-            ("Get position", "GetPosition"),
-            ("Calibrate push", "CalibratePush", int),
-            ("Calibrate pull", "CalibratePull", int),
-            ("Get max", "GetMax"),
-            ("Set max", "SetMax", int),
-            ("Get thermostat", "GetThermostat"),
-            ("Set thermostat", "SetThermostat", float),
-            ("Read temperature", "ReadTemperature"),
-            ("Get MAC address", "GetMacAddress"),
-            ("Get reset reason", "GetResetReason"),
-            ("Soft reset", "SoftReset"),
-            ("Sync time", "SyncTime", int),
-            ("Get time", "GetTime"),
-            ("Enter Descale", "Descale"),
-            ("Enter Calibrate", "Calibrate"),
-            ("Enter Safe Mode", "SafeMode"),
-            ("Enter Rainbow!", "Rainbow"),
-            ("Cancel", "Cancel"),
-            ("Get state", "CurrentState"),
-            ("Get boost duration", "GetBoostDuration"),
-            ("Set short boost duration", "SetShortDuration", int),
-            ("Set long boost duration", "SetLongDuration", int),
-            ("Change schedule", "SetVariant", str),
-            ("Get schedule type", "GetVariant"),
+            ("Unlock & Zero", "UnlockAndZero"),#
+            ("Lock", "Lock"),#
+            ("Get lock", "GetLock"),#
+            ("Get position", "GetPosition"),#
+            ("Calibrate push", "CalibratePush", int),#
+            ("Calibrate pull", "CalibratePull", int),#
+            ("Get max", "GetMax"),#
+            ("Set max", "SetMax", int),#
+            ("Get thermostat", "GetThermostat"),#
+            ("Set thermostat", "SetThermostat", float),#
+            ("Read temperature", "ReadTemperature"),#
+            ("Get MAC address", "GetMacAddress"),#
+            ("Get reset reason", "GetResetReason"),#
+            ("Soft reset", "SoftReset"),#
+            ("Sync time", "SyncTime", int),#
+            ("Get time", "GetTime"),#
+            ("Enter Descale", "Descale"),#
+            ("Enter Calibrate", "Calibrate"),#
+            ("Enter Safe Mode", "SafeMode"),#
+            ("Enter Rainbow!", "Rainbow"),#
+            ("Cancel", "Cancel"),#
+            ("Get state", "CurrentState"),#
+            ("Get boost duration", "GetBoostDuration"),#
+            ("Set short boost duration", "SetShortDuration", int),#
+            ("Set long boost duration", "SetLongDuration", int),#
+            ("Change schedule", "SetVariant", str),#
+            ("Get schedule type", "GetVariant"),#
 
-            ("PANIC!", "StartPanic", str),
-            ("EXCEPTION", "StartException", str),
+            ("PANIC!", "StartPanic", str),#
+            ("EXCEPTION", "StartException", str),#
 
-            ("Show Brightness", "GetLEDBrightness"),
-            ("Get Up time", "GetUpTime"),
+            ("Show Brightness", "GetLEDBrightness"),#
+            ("Get Up time", "GetUpTime"),#
 
         ]
 

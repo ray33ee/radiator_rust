@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Radiator Controller • Calibrate</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="/favicon.png" type="image/png">
   <style>
     /* Settings-style layout (for calibrate page too) */
 .settings {
@@ -76,6 +77,61 @@
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+/* Toast / inline notice */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  max-width: min(560px, 92vw);
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.3;
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  animation: toast-in 150ms ease-out;
+}
+
+.toast .icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  width: 18px;
+  height: 18px;
+  opacity: .85;
+}
+
+.toast .msg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.toast .close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+  opacity: .7;
+}
+.toast .close:hover { opacity: 1; }
+
+@keyframes toast-in {
+  from { transform: translateX(-50%) translateY(8px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0);  opacity: 1; }
+}
+
+
   </style>
 </head>
 <body>
@@ -104,19 +160,19 @@
 
         <div class="nav-group">
           <div class="nav-title">Controls</div>
-          <a href="/Thermostat:">Thermostat</a>
-          <a href="/Schedule:">Schedule</a>
+          <a href="/thermostat">Thermostat</a>
+          <a href="/calibrate">Schedule</a>
           <div class="sub">
-            <a href="/Summer:">Summer</a>
-            <a href="/Winter:">Winter</a>
-            <a href="/Brightness:">Brightness</a>
+            <a href="/summer">Summer</a>
+            <a href="/winter">Winter</a>
+            <a href="/brightness">Brightness</a>
           </div>
           <a class="active" href="/calibrate">Calibrate</a>
         </div>
 
         <div class="nav-group">
           <div class="nav-title">System</div>
-          <a href="/Network:">Network</a>
+          <a href="/network">Network</a>
           <a href="/settings">Settings</a>
         </div>
       </div>
@@ -222,6 +278,50 @@
   </div>
 
   <script>
+    function showToast(message, {timeout = 2000} = {}) {
+      // Remove an existing toast to avoid stacking
+      const existing = document.querySelector('.toast');
+      if (existing) existing.remove();
+
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.setAttribute('role', 'alert');
+      toast.setAttribute('aria-live', 'polite');
+
+      // Simple inline SVG warning icon (inherits text color)
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('viewBox', '0 0 24 24');
+      icon.classList.add('icon');
+      icon.innerHTML = '<path d="M1 21h22L12 2 1 21zm12-3h-2v2h2v-2zm0-8h-2v6h2V10z"></path>';
+
+      const msg = document.createElement('div');
+      msg.className = 'msg';
+      msg.textContent = message;
+
+      const close = document.createElement('button');
+      close.className = 'close';
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Dismiss');
+      close.textContent = '×';
+      close.addEventListener('click', () => toast.remove());
+
+      toast.append(icon, msg, close);
+      document.body.appendChild(toast);
+
+      if (timeout > 0) {
+        setTimeout(() => {
+          // Fade-out (optional): just remove for simplicity
+          toast.remove();
+        }, timeout);
+      }
+    }
+  </script>
+
+
+  <script>
+
+
+
     // All requests are POSTs with query flags; page stays put.
     document.getElementById('cal-mode-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -231,27 +331,67 @@
     document.getElementById('set-max-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const v = parseInt(document.getElementById('set-max-input').value, 10) || 0;
-      try { await fetch('/calibrate?set_max=' + encodeURIComponent(v), { method: 'POST' }); } catch(e){}
+      try { 
+
+        var res = await fetch('/calibrate?set_max=' + encodeURIComponent(v), { method: 'POST' }); 
+
+        if (res.status == 403) {
+          showToast('Must be in calibrate mode to change motor settings.');
+          return;
+        }
+
+      } catch(e){ 
+
+      }
     });
 
     document.getElementById('push-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      try { await fetch('/calibrate?push=7', { method: 'POST' }); } catch(e){}
+      try { 
+        var res = await fetch('/calibrate?push=7', { method: 'POST' });  
+
+        if (res.status == 403) {
+          showToast('Must be in calibrate mode to manually push motor.');
+          return;
+        }
+
+      } catch(e){}
     });
 
     document.getElementById('pull-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      try { await fetch('/calibrate?pull=7', { method: 'POST' }); } catch(e){}
+      try { 
+        var res = await fetch('/calibrate?pull=7', { method: 'POST' });  
+
+        if (res.status == 403) {
+          showToast('Must be in calibrate mode to manually pull motor.');
+          return;
+        }
+      } catch(e){}
     });
 
     document.getElementById('lock-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      try { await fetch('/calibrate?action=lock', { method: 'POST' }); } catch(e){}
+      try { 
+        var res = await fetch('/calibrate?action=lock', { method: 'POST' });  
+
+        if (res.status == 403) {
+          showToast('Must be in calibrate mode to lock motor.');
+          return;
+        }
+      } catch(e){}
     });
 
     document.getElementById('unlock-zero-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      try { await fetch('/calibrate?action=unlock_zero', { method: 'POST' }); } catch(e){}
+      try { 
+        var res = await fetch('/calibrate?action=unlock_zero', { method: 'POST' });  
+
+        if (res.status == 403) {
+          showToast('Must be in calibrate mode to unlock and zero motor.');
+          return;
+        }
+      } catch(e){}
     });
   </script>
 </body>

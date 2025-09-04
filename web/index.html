@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Radiator Controller • Dashboard</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="/favicon.png" type="image/png">
 </head>
 <body>
   <div class="app">
@@ -32,19 +33,19 @@
 
         <div class="nav-group">
           <div class="nav-title">Controls</div>
-          <a href="/Thermostat:" class="">Thermostat</a>
-          <a href="/Schedule:" class="">Schedule</a>
+          <a href="/thermostat" class="">Thermostat</a>
+          <a href="/" class="">Schedule</a>
           <div class="sub">
-            <a href="/Summer:" class="">Summer</a>
-            <a href="/Winter:" class="">Winter</a>
-            <a href="/Brightness:" class="">Brightness</a>
+            <a href="/summer" class="">Summer</a>
+            <a href="/winter" class="">Winter</a>
+            <a href="/brightness" class="">Brightness</a>
           </div>
           <a href="/calibrate" class="">Calibrate</a>
         </div>
 
         <div class="nav-group">
           <div class="nav-title">System</div>
-          <a href="/Network:" class="">Network</a>
+          <a href="/network" class="">Network</a>
           <a href="/settings" class="">Settings</a>
         </div>
       </div>
@@ -93,9 +94,9 @@
           </div>
         </section>
 
-        <!-- Boost -->
+        <!-- Cancel -->
         <section class="card">
-          <div class="icon">🔥</div>
+          <div class="icon">X</div>
           <div class="meta">
             <div class="label">Cancel</div>
             <div class="value">Cancel</div>
@@ -111,10 +112,17 @@
         <section class="card">
           <div class="icon">S</div>
           <div class="meta">
-            <div class="label">Schedule Type</div>
+            <div class="label">Schedule</div>
             <div class="value">{{2}}</div>
+            <div style="margin-top: 10px; display: flex; gap: 8px;">
+              <form id="summer-form" method="post">
+                <button class="btn btn-primary" type="submit">Summer</button>
+              </form>
+              <form id="winter-form" method="post">
+                <button class="btn btn-primary" type="submit">Winter</button>
+              </form>
+            </div>
           </div>
-          <span class="badge">{{3}}</span>
         </section>
 
         <!-- Device Time -->
@@ -122,7 +130,7 @@
           <div class="icon">⏰</div>
           <div class="meta">
             <div class="label">Device Time</div>
-            <div class="value">{{4}}</div>
+            <div class="value">{{3}}</div>
           </div>
           <span class="badge">UTC</span>
         </section>
@@ -132,7 +140,7 @@
           <div class="icon">⏱</div>
           <div class="meta">
             <div class="label">Up Time</div>
-            <div class="value">{{5}}</div>
+            <div class="value">{{4}}</div>
           </div>
           <span class="badge">OK</span>
         </section>
@@ -142,7 +150,8 @@
           <div class="icon">⚙︎</div>
           <div class="meta">
             <div class="label">Device State</div>
-            <div class="value">{{6}}</div>
+            <div class="value">{{5}}</div>
+            <div>{{6}}</div>
           </div>
           <span class="badge ok">Nominal</span>
         </section>
@@ -156,6 +165,20 @@
           </div>
           <span class="badge ok">Flowing</span>
         </section>
+
+        <!-- Descale -->
+        <section class="card">
+          <div class="icon">D</div>
+          <div class="meta">
+            <div class="label">Descale</div>
+            <div style="margin-top: 10px; display: flex; gap: 8px;">
+              <form id="descale-form" method="post">
+                <button class="btn btn-primary" type="submit">Descale</button>
+              </form>
+            </div>
+          </div>
+        </section>
+
       </div>
 
     </main>
@@ -205,6 +228,48 @@
         });
       } catch (err) {
         console.error('Failed to cancel', err);
+      }
+    });
+
+    document.getElementById('summer-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '?schedule=summer';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to cancel', err);
+      }
+    });
+
+    document.getElementById('winter-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '?schedule=winter';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to cancel', err);
+      }
+    });
+
+    document.getElementById('descale-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '?action=descale';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to descale', err);
       }
     });
 

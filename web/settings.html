@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Radiator Controller • Settings</title>
+  <link rel="icon" href="/favicon.png" type="image/png">
   <style>
     :root {
       --bg: #0f1216;
@@ -256,19 +257,19 @@
 
         <div class="nav-group">
           <div class="nav-title">Controls</div>
-          <a href="/Thermostat:">Thermostat</a>
-          <a href="/Schedule:">Schedule</a>
+          <a href="/thermostat">Thermostat</a>
+          <a href="/settings">Schedule</a>
           <div class="sub">
-            <a href="/Summer:">Summer</a>
-            <a href="/Winter:">Winter</a>
-            <a href="/Brightness:">Brightness</a>
+            <a href="/summer">Summer</a>
+            <a href="/winter">Winter</a>
+            <a href="/brightness">Brightness</a>
           </div>
           <a href="/calibrate">Calibrate</a>
         </div>
         <div class="nav-group">
           <div class="nav-title">System</div>
-          <a href="/Network:">Network</a>
-          <a class="active" href="/Settings:">Settings</a>
+          <a href="/network">Network</a>
+          <a class="active" href="/settings">Settings</a>
         </div>
       </div>
     </nav>
@@ -285,8 +286,59 @@
 
         <div class="item">
           <div class="left">
-            <div class="label">Reset reason</div>
+            <div class="label">Reset code</div>
             <div class="value" id="reset-reason">{{0}}</div>
+          </div>
+          <div class="right"></div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Reset reason</div>
+            <div class="value" id="reset-reason">{{1}}</div>
+          </div>
+          <div class="right"></div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Rainbow LED</div>
+            <div class="value">Cycle LED colours</div>
+          </div>
+          <div class="right">
+            <form id="rainbow-form">
+              <button class="btn btn-primary" type="submit">Start Rainbow</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">CPU core temperature</div>
+            <div class="value" id="reset-reason">{{2}}</div>
+          </div>
+          <div class="right"></div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Brightness</div>
+            <div class="value" id="reset-reason">{{3}}%</div>
+          </div>
+          <div class="right"></div>
+        </div>
+
+
+      </section>
+
+
+      <section class="group">
+        <h3>Time</h3>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Current Time</div>
+            <div class="value" id="current-time">{{4}}</div>
           </div>
           <div class="right"></div>
         </div>
@@ -303,22 +355,13 @@
           </div>
         </div>
 
-        <div class="item">
-          <div class="left">
-            <div class="label">Rainbow LED</div>
-            <div class="value">Cycle LED colours</div>
-          </div>
-          <div class="right">
-            <form id="rainbow-form">
-              <button class="btn btn-primary" type="submit">Start Rainbow</button>
-            </form>
-          </div>
-        </div>
+
       </section>
+
 
       <!-- Boost -->
       <section class="group">
-        <h3>Boost</h3>
+        <h3>Boost Duration</h3>
 
         <div class="item">
           <div class="left">
@@ -326,7 +369,7 @@
             <div class="value">Set how long a short boost runs</div>
           </div>
           <div class="right">
-            <input type="number" id="short-boost-min" min="1" max="240" value="10" />
+            <input type="number" id="short-boost-min" min="1" max="60" value="{{5}}" />
             <form id="short-boost-form">
               <button class="btn btn-primary" type="submit">Set</button>
             </form>
@@ -339,7 +382,7 @@
             <div class="value">Set how long a long boost runs</div>
           </div>
           <div class="right">
-            <input type="number" id="long-boost-min" min="1" max="480" value="30" />
+            <input type="number" id="long-boost-min" min="1" max="60" value="{{6}}" />
             <form id="long-boost-form">
               <button class="btn btn-primary" type="submit">Set</button>
             </form>
@@ -366,7 +409,7 @@
         <div class="item">
           <div class="left">
             <div class="label">Panic</div>
-            <div class="value">Trigger panic handler</div>
+            <div class="value">Force panic</div>
           </div>
           <div class="right">
             <form id="panic-form">
@@ -378,7 +421,7 @@
         <div class="item">
           <div class="left">
             <div class="label">Exception</div>
-            <div class="value">Trigger test exception</div>
+            <div class="value">Force exception</div>
           </div>
           <div class="right">
             <form id="exception-form">
@@ -413,8 +456,10 @@
     document.getElementById('sync-form').addEventListener('submit', async function (e) {
       e.preventDefault(); // stop normal navigation
 
-      const epoch = Math.floor(Date.now() / 1000);
-      const url = '/settings?sync_time=' + epoch;
+      const now = new Date();
+      const localEpoch = Math.floor((now.getTime() - now.getTimezoneOffset() * 60_000) / 1000);
+
+      const url = '/settings?sync_time=' + localEpoch;
 
       try {
         await fetch(url, {

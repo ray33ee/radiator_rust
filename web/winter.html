@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Radiator Controller • Winter</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <style>
+    /* Settings-style layout (for calibrate page too) */
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  max-width: 860px;
+}
+
+.group {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.group > h3 {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  letter-spacing: .02em;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.item + .item { border-top: 1px solid var(--border); }
+
+.item .left { min-width: 0; }
+.item .left .label { font-size: 12px; color: var(--muted); }
+.item .left .value { font-size: 16px; font-weight: 600; margin-top: 2px; }
+
+.item .right {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.item .right form { margin: 0; }
+
+@media (max-width: 640px) {
+  .item { flex-direction: column; align-items: stretch; }
+  .item .right { justify-content: flex-end; }
+}
+
+/* Inputs inside settings items */
+.item input[type="number"] {
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  min-width: 60px;
+}
+
+.item input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.schedule-controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.schedule-controls select, .schedule-controls input[type="time"] {
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--panel); color: var(--text); font: inherit;
+}
+.table-wrap { overflow:auto; }
+.schedule-table { width:100%; border-collapse: collapse; }
+.schedule-table th, .schedule-table td { padding: 8px 10px; border-top: 1px solid var(--border); text-align:left; }
+.schedule-table td:last-child { text-align:right; }
+.notice-bad { border:1px solid var(--border); border-left:4px solid var(--accent); border-radius: var(--radius); padding:8px 10px; }
+
+/* Toast / inline notice */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  max-width: min(560px, 92vw);
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.3;
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  animation: toast-in 150ms ease-out;
+}
+
+.toast .icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  width: 18px;
+  height: 18px;
+  opacity: .85;
+}
+
+.toast .msg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.toast .close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+  opacity: .7;
+}
+.toast .close:hover { opacity: 1; }
+
+@keyframes toast-in {
+  from { transform: translateX(-50%) translateY(8px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0);  opacity: 1; }
+}
+
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Mobile menu toggle -->
+    <input id="menu" type="checkbox" class="menu-toggle" />
+
+    <header class="header">
+      <label for="menu" class="hamburger" aria-label="Open navigation"><span></span></label>
+      <div class="brand">
+        <div class="dot" aria-hidden="true"></div>
+        <div>Radiator Controller</div>
+      </div>
+      <div class="right">
+        <span class="label">Winter</span>
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="nav">
+        <div class="nav-group">
+          <div class="nav-title">Main</div>
+          <a href="/">Home</a>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">Controls</div>
+          <a href="/thermostat">Thermostat</a>
+          <a href="/winter">Schedule</a>
+          <div class="sub">
+            <a href="/summer">Summer</a>
+            <a class="active" href="/winter">Winter</a>
+            <a href="/brightness">Brightness</a>
+          </div>
+          <a href="/calibrate">Calibrate</a>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-title">System</div>
+          <a href="/network">Network</a>
+          <a href="/settings">Settings</a>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Backdrop for mobile menu -->
+    <label for="menu" class="backdrop" aria-hidden="true"></label>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="settings">
+        
+        <!-- Add schedule code here -->
+        <section class="group">
+          <h3>Winter Schedule</h3>
+
+          <!-- Add / controls -->
+          <div class="item">
+            <div class="right schedule-controls">
+              <form id="slot-add-form">
+                <select id="day">
+                  <option>Mon</option><option>Tue</option><option>Wed</option><option>Thu</option>
+                  <option>Fri</option><option>Sat</option><option>Sun</option>
+                </select>
+                <input id="start" type="time" required>
+                <span>→</span>
+                <input id="end" type="time" required>
+                <select id="state">
+                  <option value="Regulate">regulate</option>
+                  <option value="Off">off</option>
+                  <option value="Descale">descale</option>
+                </select>
+                <button class="btn btn-primary" type="submit">Add</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Table -->
+          <div class="item">
+            <div class="left" style="width:100%">
+              <div class="table-wrap">
+                <table class="schedule-table" aria-label="Current schedule">
+                  <thead>
+                    <tr><th>Day</th><th>Start</th><th>End</th><th>State</th><th></th></tr>
+                  </thead>
+                  <tbody id="sched-body"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="right"></div>
+          </div>
+        </section>
+
+
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // All requests are POSTs with query flags; page stays put.
+    // --- Data model --------------------------------------------------------------
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const IDX2WWW = ['MON','TUE','WED','THU','FRI','SAT','SUN'];
+const WWW2IDX = Object.fromEntries(IDX2WWW.map((w,i)=>[w, i]));
+
+let slots = [];
+
+// --- Utilities ---------------------------------------------------------------
+const pad2 = n => (n < 10 ? '0' + n : '' + n);
+const toMin = hhmm => { const [h,m] = hhmm.split(':').map(Number); return h*60 + m; };
+const toHHMM = mins => `${pad2(Math.floor(mins/60))}:${pad2(mins%60)}`;
+const formatLine = s => `${IDX2WWW[s.day]},${toHHMM(s.start)},${toHHMM(s.end)},${s.state}`;
+
+const overlaps = (a, b) => a.start < b.end && b.start < a.end;
+
+
+async function fetchScheduleOnLoad(){
+  try {
+    const res = await fetch('/winter?start=true', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json(); // { schedule: [{day,start,end,state}, ...] }
+    if (Array.isArray(data)) {
+      slots = data.map(s => ({
+        day: s.day-1|0, start: s.start|0, end: s.end|0, state: String(s.mode)
+      }));
+      normalize();
+    }
+  } catch (e) { console.warn('Schedule fetch failed', e); }
+}
+
+window.addEventListener('load', () => {
+  setTimeout(fetchScheduleOnLoad, 250);   // small delay = no race
+}, { once: true });
+
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) setTimeout(fetchScheduleOnLoad, 100); // bfcache restore
+});
+
+function hasConflict(candidate, arr) {
+  // conflict = same day, different state, and time overlap
+  for (const s of arr) {
+    if (s.day !== candidate.day) continue;
+    if (s.state === candidate.state) continue; // same-state overlaps are allowed (will merge)
+    if (overlaps(s, candidate)) return s;      // return the conflicting slot
+  }
+  return null;
+}
+
+function showToast(message, {timeout = 4000} = {}) {
+      // Remove an existing toast to avoid stacking
+      const existing = document.querySelector('.toast');
+      if (existing) existing.remove();
+
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.setAttribute('role', 'alert');
+      toast.setAttribute('aria-live', 'polite');
+
+      // Simple inline SVG warning icon (inherits text color)
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('viewBox', '0 0 24 24');
+      icon.classList.add('icon');
+      icon.innerHTML = '<path d="M1 21h22L12 2 1 21zm12-3h-2v2h2v-2zm0-8h-2v6h2V10z"></path>';
+
+      const msg = document.createElement('div');
+      msg.className = 'msg';
+      msg.textContent = message;
+
+      const close = document.createElement('button');
+      close.className = 'close';
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Dismiss');
+      close.textContent = '×';
+      close.addEventListener('click', () => toast.remove());
+
+      toast.append(icon, msg, close);
+      document.body.appendChild(toast);
+
+      if (timeout > 0) {
+        setTimeout(() => {
+          // Fade-out (optional): just remove for simplicity
+          toast.remove();
+        }, timeout);
+      }
+    }
+
+function render() {
+  const tbody = document.getElementById('sched-body');
+  tbody.innerHTML = '';
+  slots.forEach((s, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${DAYS[s.day]}</td>
+      <td>${toHHMM(s.start)}</td>
+      <td>${toHHMM(s.end)}</td>
+      <td>${s.state}</td>
+      <td><button class="btn btn-warn" data-i="${i}">Delete</button></td>`;
+    tbody.appendChild(tr);
+  });
+  // Hook delete buttons
+  tbody.querySelectorAll('button[data-i]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      slots.splice(Number(e.currentTarget.dataset.i), 1);
+      normalize(); // keep tidy after removal
+      postSchedule();
+    });
+  });
+}
+
+
+// --- Core logic --------------------------------------------------------------
+/** Sort by day, then start time */
+function sortSlots(arr) {
+  arr.sort((a,b) => (a.day - b.day) || (a.start - b.start) || (a.end - b.end));
+}
+
+/** Merge overlapping or touching ranges of the SAME state within each day. */
+function mergeSameState(arr) {
+  const out = [];
+  let i = 0;
+  while (i < arr.length) {
+    const cur = {...arr[i++]};
+    while (i < arr.length && arr[i].day === cur.day &&
+           arr[i].state === cur.state && arr[i].start <= cur.end) {
+      cur.end = Math.max(cur.end, arr[i].end);
+      i++;
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+/** Find overlaps between DIFFERENT states within each day. */
+function findConflicts(arr) {
+  const conflicts = [];
+  for (let d = 0; d < 7; d++) {
+    const daySlots = arr.filter(s => s.day === d);
+    for (let i = 0; i < daySlots.length - 1; i++) {
+      const a = daySlots[i], b = daySlots[i+1];
+      if (b.start < a.end && a.state !== b.state) {
+        conflicts.push({ day: d, a, b });
+      }
+    }
+  }
+  return conflicts;
+}
+
+/** Normalize: sort → merge same-state overlaps/touches → re-check conflicts */
+function normalize() {
+  sortSlots(slots);
+  slots = mergeSameState(slots);
+  render();
+}
+
+/** Serialize to lines required by ESP, in chronological order */
+function toLines() {
+  const lines = slots.map(formatLine);
+  return lines;
+}
+
+function logSlots() {
+  if (!slots.length) {
+    console.log("No schedule slots defined.");
+    return;
+  }
+
+  console.log("Current schedule:");
+  slots.forEach((s, i) => {
+    console.log(
+      `${i + 1}. ${DAYS[s.day]} ${toHHMM(s.start)}–${toHHMM(s.end)} → ${s.state}`
+    );
+  });
+}
+
+
+async function postSchedule() {
+  
+  // Convert each slot into structured JSON
+  const scheduleArray = slots.map(s => ({
+    day: s.day+1,        // integer: 0=Mon … 6=Sun
+    start: s.start,    // integer minutes since midnight
+    end: s.end,        // integer minutes since midnight
+    mode: s.state     // string: "regulate" | "off" | "descale"
+  }));
+
+  const payload = { schedule: scheduleArray };
+
+  try {
+    const res = await fetch('/winter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scheduleArray)
+    });
+
+    if (!res.ok) {
+      console.error(`POST failed: HTTP ${res.status}`);
+    } else {
+      console.log("Schedule posted successfully.");
+    }
+  } catch (err) {
+    console.error("POST failed:", err);
+  }
+}
+
+
+// --- Event handlers ----------------------------------------------------------
+document.getElementById('slot-add-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const dayIdx = DAYS.indexOf(document.getElementById('day').value);
+  const start = toMin(document.getElementById('start').value);
+  const end   = toMin(document.getElementById('end').value);
+  const state = document.getElementById('state').value;
+
+  if (isNaN(start) || isNaN(end) || start >= end) {
+    showToast('Please enter a valid time range (start must be before end).');
+    return;
+  }
+
+  const candidate = { day: dayIdx, start, end, state };
+  const conflict = hasConflict(candidate, slots);
+  if (conflict) {
+    showToast(
+      `Conflicts with existing ${DAYS[conflict.day]} `
+      + `${toHHMM(conflict.start)}–${toHHMM(conflict.end)} (${conflict.state}).`
+    );
+    return; // do NOT add
+  }
+
+  // Safe to add (same-state overlaps/touches will be merged by normalize)
+  slots.push(candidate);
+  normalize();
+
+  postSchedule();
+});
+
+
+
+  </script>
+</body>
+</html>

@@ -114,7 +114,12 @@ static mut BLUE_REF: Option<&'static mut esp_hal::ledc::channel::Channel<'static
 static INDEX_HTML: &[u8] = core::include_bytes!("../../web/index.html");
 static SETTINGS_HTML: &[u8] = core::include_bytes!("../../web/settings.html");
 static CALIBRATE_HTML: &[u8] = core::include_bytes!("../../web/calibrate.html");
+static THERMOSTAT_HTML: &[u8] = core::include_bytes!("../../web/thermostat.html");
+static NETWORK_HTML: &[u8] = core::include_bytes!("../../web/network.html");
+static SUMMER_HTML: &[u8] = core::include_bytes!("../../web/summer.html");
+static WINTER_HTML: &[u8] = core::include_bytes!("../../web/winter.html");
 static STYLES_CSS: &[u8] = core::include_bytes!("../../web/styles.css");
+static FAVICON: &[u8] = core::include_bytes!("../../web/favicon.png");
 
 
 #[embassy_executor::task]
@@ -310,6 +315,21 @@ async fn send_css<'a>(socket: & mut TcpSocket<'a>) {
     socket.write_all(STYLES_CSS).await.unwrap();
 }
 
+async fn send_favicon<'a>(socket: & mut TcpSocket<'a>) {
+    use embedded_io_async::Write;
+
+    socket.write_all(b"HTTP/1.1 ").await.unwrap();
+    socket.write_all(b"202 OK").await.unwrap();
+    socket.write_all(b"\r\nContent-Type: ").await.unwrap();
+    socket.write_all(b"text/css").await.unwrap();
+    socket.write_all(b"\r\nContent-Length: ").await.unwrap();
+    socket.write_all(format!("{}", STYLES_CSS.len()).as_bytes()).await.unwrap();
+    // cache CSS so reloads don’t flash
+    let _ = socket.write_all(b"\r\nCache-Control: public, max-age=604800").await;
+    socket.write_all(b"\r\nConnection: close\r\n\r\n").await.unwrap();
+    socket.write_all(FAVICON).await.unwrap();
+}
+
 //todo: fix the length parameter so it matches the length of a templated file
 async fn send_template<'a, 'x>(mime: & str, template: & [u8], socket: & mut TcpSocket<'a>, replacer: & 'x alloc::vec::Vec<& 'x str>) {
 
@@ -365,6 +385,14 @@ async fn send_template<'a, 'x>(mime: & str, template: & [u8], socket: & mut TcpS
     //socket.write_all(INDEX_HTML).await.unwrap();
 }
 
+async fn send_403<'a>(socket: &mut TcpSocket<'a>) {
+    use embedded_io_async::Write;
+
+    let _ = socket.write_all(b"HTTP/1.1 403 Forbidden\r\n").await;
+    let _ = socket.write_all(b"Content-Length: 0\r\n").await;
+    let _ = socket.write_all(b"Connection: close\r\n\r\n").await;
+}
+
 async fn send_404<'a>(socket: & mut TcpSocket<'a>) {
     use embedded_io_async::Write;
 
@@ -382,6 +410,25 @@ async fn send_404<'a>(socket: & mut TcpSocket<'a>) {
     let _ = socket.write_all(body).await;
 }
 
+async fn send_200<'a>(socket: &mut TcpSocket<'a>, body: Option<& str>) {
+    use embedded_io_async::Write;
+
+    let _ = socket.write_all(b"HTTP/1.1 200 OK\r\n").await;
+    let _ = socket.write_all(b"Content-Length: ").await;
+    let _ = socket.write_all(format!("{}", body.as_ref().map(|x| x.len()).unwrap_or_else(||0)).as_bytes()).await;
+    let _ = socket.write_all(b"\r\n").await;
+    let _ = socket.write_all(b"Connection: close\r\n\r\n").await;
+    if let Some(body) = body {
+        let _ = socket.write_all(body.as_bytes()).await;
+    }
+}
+
+async fn send_schedule<'a>(socket: &mut TcpSocket<'a>, schedule: & Vec<ScheduleEntry>) {
+
+    send_200(socket, Some(serde_json::to_string(schedule).unwrap().as_str())).await;
+
+}
+
 enum RequestMain {
     GetStatus,
     Reset,
@@ -394,15 +441,33 @@ enum RequestMain {
     SetLongDuration(u32),
     Rainbow,
     CalibrateInfo,
+    ThermostatInfo,
+    NetworkInfo,
     ModeCalibrate,
     ModeSafe,
     SyncTime(i64),
+    GetState,
+    Descale,
 
     SetMax(u32),
     Push(u32),
     Pull(u32),
     UnlockZero,
-    Lock
+    Lock,
+    SettingsPage,
+
+    SetSummer,
+    SetWinter,
+
+    SetThermostat(f32),
+
+    GetSummerSchedule,
+    GetWinterSchedule,
+    GetBrightnessSchedule,
+
+    SetSummerSchedule(Vec<ScheduleEntry>),
+    SetWinterSchedule(Vec<ScheduleEntry>),
+    SetBrightnessSchedule(Vec<BrightnessEntry>),
 
 }
 
@@ -415,12 +480,40 @@ enum ResponseMain {
         up_time: esp_hal::time::Instant,
         current_state: fsm::State,
         position: u32,
+        max_pos: u32,
     },
     Motor {
         max_position: u32,
         is_locked: bool,
         position: u32,
+    },
+    Settings {
+        reset_reason: u32,
+        core_temperature: Option<f32>,
+        short_boost_duration: u32,
+        long_boost_duration: u32,
+        current_time: Option<OffsetDateTime>,
+        brightness: u8,
+    },
+    Thermostat {
+        thermostat: f32,
+    },
+    Network {
+        mac_addr: [u8; 6],
+    },
+    State {
+        state: fsm::State,
+    },
+    SummerSchedule {
+        sched: Vec<ScheduleEntry>,
+    },
+    WinterSchedule {
+        sched: Vec<ScheduleEntry>,
+    },
+    BrightnessSchedule {
+        sched: Vec<BrightnessEntry>,
     }
+
 
 }
 
@@ -455,6 +548,8 @@ async fn webserver_task(
 
                 match req.parse(&buf[..n]) {
                     Ok(status) if status.is_complete() => {
+                        let body = core::str::from_utf8(&buf[status.unwrap()..n]).unwrap();
+                        println!("Body: {}", body);
                         let method = req.method.unwrap_or("<none>");
                         let path = req.path.unwrap_or("<none>");
 
@@ -476,17 +571,50 @@ async fn webserver_task(
                                 send_css(& mut socket).await;
 
                             }
+                            ("GET", "/favicon.png") => {
+
+                                send_favicon(& mut socket).await;
+
+                            }
                             ("GET", "/") => {
 
                                 request.send(RequestMain::GetStatus).await;
 
-                                if let ResponseMain::Status { temperature, thermostat, variant, current_time, up_time, current_state, position } = response.receive().await {
+                                if let ResponseMain::Status { temperature, thermostat, variant, current_time, up_time, current_state, position, max_pos } = response.receive().await {
 
                                     let temperature = temperature.map(|t| format!("{}", t)).unwrap_or_else(|| format!("Error"));
                                     let thermostat = format!("{:?}", thermostat);
                                     let variant = format!("{:?}", variant);
-                                    let current_time = current_time.map(|t| format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.year(), t.month() as u32, t.day(), t.hour(), t.minute(), t.second())).unwrap_or_else(|| format!("Error"));
+                                    let current_time = current_time.map(|t| format!("{:.3} {:02}:{:02}", t.weekday(), t.hour(), t.minute())).unwrap_or_else(|| format!("Error"));
+
+                                    let aux_info = match &current_state {
+                                        fsm::State::Boost(instant, duration) => {
+                                            let seconds_left = (*duration - instant.elapsed()).as_secs();
+
+                                            let minutes = seconds_left / 60;
+                                            let seconds = seconds_left % 60;
+
+                                            if minutes == 0 {
+                                                format!("{}s", seconds)
+                                            } else {
+                                                format!("{}m {}s", minutes, seconds)
+                                            }
+                                        }
+                                        fsm::State::Warning(code) => { format!("{:?}", code) }
+                                        _ => { format!("") }
+                                    };
+
                                     let current_state = format!("{}", current_state);
+                                    let valve_state = if position == 0 {
+                                        format!("Open")
+                                    } else {
+                                        if position == max_pos {
+                                            format!("Closed")
+                                        } else {
+                                            format!("Undefined")
+                                        }
+                                    };
+
                                     //todo: show extra information with state (warning code, boost duration. etc. add new cards)
 
                                     //todo: automatically refresh on boost and cancel
@@ -515,17 +643,15 @@ async fn webserver_task(
                                         }
                                     };
 
-
-
                                     let cards = vec![
                                         temperature.as_str(),
                                         thermostat.as_str(),
                                         variant.as_str(),
-                                        "Active",
                                         current_time.as_str(),
                                         up_time.as_str(),
                                         current_state.as_str(),
-                                        "Open" //Todo: implement the Open/close indication
+                                        aux_info.as_str(),
+                                        valve_state.as_str(),
                                     ];
 
 
@@ -540,56 +666,123 @@ async fn webserver_task(
                                     (Some("boost"), Some("short")) => {
                                         println!("Short boost");
                                         request.send(RequestMain::ShortBoost).await;
+                                        send_200(& mut socket, None).await;
                                     }
                                     (Some("boost"), Some("long")) => {
                                         println!("Long boost");
+                                        request.send(RequestMain::LongBoost).await;
+                                        send_200(& mut socket, None).await;
                                     }
                                     (Some("action"), Some("cancel")) => {
                                         println!("Cancel!");
                                         request.send(RequestMain::Cancel).await;
+                                        send_200(& mut socket, None).await;
+                                    }
+                                    (Some("schedule"), Some("summer")) => {
+                                        request.send(RequestMain::SetSummer).await;
+                                        send_200(& mut socket, None).await;
+                                    }
+                                    (Some("schedule"), Some("winter")) => {
+                                        request.send(RequestMain::SetWinter).await;
+                                        send_200(& mut socket, None).await;
+                                    }
+                                    (Some("action"), Some("descale")) => {
+                                        println!("Descale!");
+                                        request.send(RequestMain::Descale).await;
+                                        send_200(& mut socket, None).await;
                                     }
                                     _ => send_404(&mut socket).await,
                                 }
                             }
                             ("GET", "/settings") => {
-                                let cards = vec!["3"];
+
+                                request.send(RequestMain::SettingsPage).await;
+
+                                if let ResponseMain::Settings { reset_reason, core_temperature, short_boost_duration, long_boost_duration, current_time, brightness } = response.receive().await {
+
+                                    let reset_code = format!("{}", reset_reason);
+
+                                    let reset_reason = match reset_reason {
+                                        1 => "Reset due to power-on event",
+                                        2 => "Reset by external pin (N/A) for ESP32",
+                                        3 => "Software reset via esp_restart",
+                                        4 => "Software reset due to panic/exception",
+                                        5 => "Reset (hardware or software) due to interrupt watchdog",
+                                        6 => "Reset due to task watchdog",
+                                        7 => "Reset due to other watchdogs",
+                                        8 => "Reset after exiting deep sleep mode",
+                                        9 => "Brownout reset (software or hardware)",
+                                        10 => "Reset over SDIO",
+                                        11 => "Reset by USB peripheral",
+                                        12 => "Reset by JTAG",
+                                        13 => "Reset due to efuse error",
+                                        14 => "Reset due to power glitch detected",
+                                        15 => "Reset due to CPU lock up (double exception)",
+                                        _ => "Unknown reset reason",
+                                    };
+
+                                    let cpu_tsense = match core_temperature {
+                                        Some(value) => format!("{:.1}°C", value),
+                                        None => format!("Unknown"),
+                                    };
+
+                                    let short = format!("{}", short_boost_duration / 60u32);
+                                    let long = format!("{}", long_boost_duration / 60u32);
+
+                                    let current_time = current_time.map(|t| format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.year(), t.month() as u32, t.day(), t.hour(), t.minute(), t.second())).unwrap_or_else(|| format!("Error"));
+
+                                    let brightness = format!("{}", brightness);
+
+                                    let cards = vec![reset_code.as_str(), reset_reason, cpu_tsense.as_str(), brightness.as_str(), current_time.as_str(), short.as_str(), long.as_str()];
 
 
-                                send_template("text/html", SETTINGS_HTML, & mut socket, &cards).await;
+                                    send_template("text/html", SETTINGS_HTML, & mut socket, &cards).await;
+                                } else {
+                                    send_404(&mut socket).await;
+                                }
+
                             }
                             ("POST", "/settings") => {
                                 match (key, value) {
                                     (Some("sync_time"), Some(value)) => {
                                         request.send(RequestMain::SyncTime(value.parse::<i64>().unwrap())).await;
                                         println!("Also sync time: {}", value);
+                                        send_200(& mut socket, None).await;
                                     }
                                     (Some("reset"), Some("true")) => {
                                         request.send(RequestMain::Reset).await;
                                         println!("Soft reset!");
+                                        send_200(& mut socket, None).await;
                                     }
                                     (Some("panic"), Some("true")) => {
                                         request.send(RequestMain::Panic).await;
                                         println!("panic!");
+                                        send_200(& mut socket, None).await;
                                     }
                                     (Some("exception"), Some("true")) => {
                                         request.send(RequestMain::Exception).await;
                                         println!("exception!");
+                                        send_200(& mut socket, None).await;
                                     }
                                     (Some("action"), Some("rainbow")) => {
                                         request.send(RequestMain::Rainbow).await;
                                         println!("rainbow   !");
+                                        send_200(& mut socket, None).await;
                                     }
                                     (Some("short_duration"), Some(duration)) => {
-                                        request.send(RequestMain::SetShortDuration(duration.parse::<u32>().unwrap())).await;
+                                        request.send(RequestMain::SetShortDuration(duration.parse::<u32>().unwrap() * 60)).await;
                                         println!("Set short duration");
+                                        send_200(& mut socket, None).await;
                                     }
                                     (Some("long_duration"), Some(duration)) => {
-                                        request.send(RequestMain::SetLongDuration(duration.parse::<u32>().unwrap())).await;
+                                        request.send(RequestMain::SetLongDuration(duration.parse::<u32>().unwrap() * 60)).await;
                                         println!("Set long duration");
+                                        send_200(& mut socket, None).await;
                                     }
                                     (Some("action"), Some("safemode")) => {
                                         request.send(RequestMain::ModeSafe).await;
                                         println!("Safe mode mode");
+                                        send_200(& mut socket, None).await;
                                     }
 
                                     _ => send_404(&mut socket).await,
@@ -614,28 +807,179 @@ async fn webserver_task(
 
                             }
                             ("POST", "/calibrate") => {
-                                match (key, value) {
-                                    (Some("action"), Some("calibrate")) => {
-                                        request.send(RequestMain::ModeCalibrate).await;
-                                    }
-                                    (Some("set_max"), Some(max)) => {
-                                        request.send(RequestMain::SetMax(max.parse::<u32>().unwrap())).await;
-                                    }
-                                    (Some("push"), Some(push)) => {
-                                        request.send(RequestMain::Push(push.parse::<u32>().unwrap())).await;
-                                    }
-                                    (Some("pull"), Some(pull)) => {
-                                        request.send(RequestMain::Push(pull.parse::<u32>().unwrap())).await;
-                                    }
-                                    (Some("action"), Some("lock")) => {
-                                        request.send(RequestMain::Lock).await;
-                                    }
-                                    (Some("action"), Some("unlock_zero")) => {
-                                        request.send(RequestMain::UnlockZero).await;
-                                    }
 
+                                request.send(RequestMain::GetState).await;
+
+                                if let ResponseMain::State{ state } = response.receive().await {
+
+                                    match (key, value) {
+                                        (Some("action"), Some("calibrate")) => {
+                                            request.send(RequestMain::ModeCalibrate).await;
+                                        }
+                                        (Some("set_max"), Some(max)) => {
+                                            if let fsm::State::Calibrate = state {
+                                                request.send(RequestMain::SetMax(max.parse::<u32>().unwrap())).await;
+                                                send_200(& mut socket, None).await;
+                                            } else {
+                                                send_403(& mut socket).await;
+                                            }
+                                        }
+                                        (Some("push"), Some(push)) => {
+                                            if let fsm::State::Calibrate = state {
+                                                request.send(RequestMain::Push(push.parse::<u32>().unwrap())).await;
+                                                send_200(& mut socket, None).await;
+                                            } else {
+                                                send_403(& mut socket).await;
+                                            }
+
+                                        }
+                                        (Some("pull"), Some(pull)) => {
+                                            if let fsm::State::Calibrate = state {
+                                                request.send(RequestMain::Pull(pull.parse::<u32>().unwrap())).await;
+                                                send_200(& mut socket, None).await;
+                                            } else {
+                                                send_403(& mut socket).await;
+                                            }
+                                        }
+                                        (Some("action"), Some("lock")) => {
+                                            if let fsm::State::Calibrate = state {
+                                                request.send(RequestMain::Lock).await;
+                                                send_200(& mut socket, None).await;
+                                            } else {
+                                                send_403(& mut socket).await;
+                                            }
+                                        }
+                                        (Some("action"), Some("unlock_zero")) => {
+                                            if let fsm::State::Calibrate = state {
+                                                request.send(RequestMain::UnlockZero).await;
+                                                send_200(& mut socket, None).await;
+                                            } else {
+                                                send_403(& mut socket).await;
+                                            }
+                                        }
+
+                                        _ => send_404(&mut socket).await,
+                                    }
+                                }
+
+                            }
+                            ("GET", "/thermostat") => {
+                                request.send(RequestMain::ThermostatInfo).await;
+
+                                if let ResponseMain::Thermostat { thermostat } = response.receive().await {
+
+                                    let thermostat = format!("{}", thermostat);
+
+                                    let cards = vec![thermostat.as_str()];
+
+
+                                    send_template("text/html", THERMOSTAT_HTML, & mut socket, &cards).await;
+                                } else {
+                                    send_404(& mut socket).await;
+                                }
+
+                            }
+                            ("GET", "/summer") => {
+
+
+                                match (key, value) {
+                                    (None, None) => {
+                                        let cards = vec![];
+
+                                        send_template("text/html", SUMMER_HTML, & mut socket, &cards).await;
+                                    }
+                                    (Some("start"), Some("true")) => {
+
+                                        request.send(RequestMain::GetSummerSchedule).await;
+
+                                        if let ResponseMain::SummerSchedule { sched } = response.receive().await {
+
+                                            send_schedule(& mut socket, &sched).await;
+
+                                        } else {
+                                            send_404(& mut socket).await;
+                                        }
+
+                                    }
+                                    _ => {
+                                        send_404(&mut socket).await;
+                                    }
+                                }
+
+
+                            }
+                            ("POST", "/summer") => {
+                                println!("'{:?}'", body);
+
+                                let v: Vec<ScheduleEntry> = serde_json::from_str(body).unwrap();
+
+                                request.send(RequestMain::SetSummerSchedule(v)).await;
+
+                                send_200(& mut socket, None).await;
+                            }
+                            ("GET", "/winter") => {
+
+
+                                match (key, value) {
+                                    (None, None) => {
+                                        let cards = vec![];
+
+                                        send_template("text/html", WINTER_HTML, & mut socket, &cards).await;
+                                    }
+                                    (Some("start"), Some("true")) => {
+
+                                        request.send(RequestMain::GetWinterSchedule).await;
+
+                                        if let ResponseMain::WinterSchedule { sched } = response.receive().await {
+
+                                            send_schedule(& mut socket, &sched).await;
+
+                                        } else {
+                                            send_404(& mut socket).await;
+                                        }
+
+                                    }
+                                    _ => {
+                                        send_404(&mut socket).await;
+                                    }
+                                }
+
+
+                            }
+                            ("POST", "/winter") => {
+                                println!("'{:?}'", body);
+
+                                let v: Vec<ScheduleEntry> = serde_json::from_str(body).unwrap();
+
+                                request.send(RequestMain::SetWinterSchedule(v)).await;
+
+                                send_200(& mut socket, None).await;
+                            }
+                            ("POST", "/thermostat") => {
+                                match (key, value) {
+                                    (Some("set_thermostat"), Some(temperature)) => {
+                                        request.send(RequestMain::SetThermostat(temperature.parse::<f32>().unwrap())).await;
+                                        send_200(& mut socket, None).await;
+                                    }
                                     _ => send_404(&mut socket).await,
                                 }
+                            }
+                            ("GET", "/network") => {
+                                request.send(RequestMain::NetworkInfo).await;
+
+                                if let ResponseMain::Network { mac_addr } = response.receive().await {
+
+                                    let mac = format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                                                      mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+
+                                    let cards = vec![mac.as_str()];
+
+
+                                    send_template("text/html", NETWORK_HTML, & mut socket, &cards).await;
+                                } else {
+                                    send_404(& mut socket).await;
+                                }
+
                             }
                             _ => {
                                 println!("Unknown");
@@ -781,6 +1125,14 @@ async fn main(spawner: Spawner) {
 
     println!("Done.");
 
+    /* Configure CPU tsense */
+
+    print!("CPU tsense...");
+
+    let cpu_tsense = esp_hal::tsens::TemperatureSensor::new(peripherals.TSENS, esp_hal::tsens::Config::default());
+
+    println!("Done.");
+
     /* Set up button */
 
     print!("Button...");
@@ -888,10 +1240,11 @@ async fn main(spawner: Spawner) {
     static RES_CHNL: StaticCell<Channel<NoopRawMutex, ResponseMain, 1>> = StaticCell::new();
     let response_channel: & 'static mut Channel<NoopRawMutex, ResponseMain, 1>  = RES_CHNL.init(Channel::new());
 
+    let mac_address = interfaces.sta.mac_address();
 
     {
 
-        let mac_address = interfaces.sta.mac_address();
+
 
         wifi_controller
             .set_configuration(&esp_wifi::wifi::Configuration::Client(esp_wifi::wifi::ClientConfiguration {
@@ -1041,21 +1394,44 @@ async fn main(spawner: Spawner) {
                         }).await;
                     }
                     RequestMain::ModeSafe => {
-                        fsm.force_change(fsm::State::SafeMode);
+                        fsm.request_change(fsm::State::SafeMode);
                     }
                     RequestMain::ModeCalibrate => {
-                        fsm.force_change(fsm::State::Calibrate);
+                        fsm.request_change(fsm::State::Calibrate);
+                    }
+                    RequestMain::SettingsPage => {
+                        let settings = ResponseMain::Settings {
+                            reset_reason: esp_hal::rom::rtc_get_reset_reason(0),
+                            core_temperature: cpu_tsense.as_ref().ok().map(|x| x.get_temperature().to_celsius()),
+                            short_boost_duration: motor.short_boost(),
+                            long_boost_duration: motor.long_boost(),
+                            current_time: {
+
+                                let guard = time_mutex.lock().await;
+
+                                guard.date_time()
+                            },
+                            brightness: fsm.get_brightness(),
+
+                        };
+
+                        response_channel.send(settings).await;
                     }
                     RequestMain::GetStatus => {
 
 
-                        let guard = time_mutex.lock().await;
 
                         let status = ResponseMain::Status {
                             temperature: thermo.get_temperature().ok(),
                             current_state: fsm.state().clone(),
+                            max_pos: motor.max_position(),
                             position: storages::get_position(),
-                            current_time: guard.date_time(),
+                            current_time: {
+
+                                let guard = time_mutex.lock().await;
+
+                                guard.date_time()
+                            },
                             up_time: start_time,
                             thermostat: thermo.thermostat(),
                             variant: fsm.variant(),
@@ -1096,6 +1472,63 @@ async fn main(spawner: Spawner) {
                     }
                     RequestMain::Lock => {
                         storages::lock();
+                    }
+                    RequestMain::SetSummer => {
+                        fsm.set_variant(Variant::Summer);
+                    }
+                    RequestMain::SetWinter => {
+                        fsm.set_variant(Variant::Winter);
+                    }
+                    RequestMain::ThermostatInfo => {
+                        let thermo = ResponseMain::Thermostat {
+                            thermostat: thermo.thermostat(),
+                        };
+
+                        response_channel.send(thermo).await;
+                    }
+                    RequestMain::SetThermostat(temperature) => {
+                        thermo.set_thermostat(temperature);
+                    }
+                    RequestMain::NetworkInfo => {
+                        let network = ResponseMain::Network {
+                            mac_addr: mac_address.clone(),
+                        };
+
+                        response_channel.send(network).await;
+                    }
+                    RequestMain::GetState => {
+                        let state = ResponseMain::State {
+                            state: fsm.state().clone(),
+                        };
+
+                        response_channel.send(state).await;
+                    }
+                    RequestMain::Descale => {
+                        fsm.request_change(fsm::State::Descale);
+                    }
+                    RequestMain::GetSummerSchedule => {
+
+                        response_channel.send(ResponseMain::SummerSchedule { sched: fsm.summer().to_vec() }).await;
+
+                    }
+                    RequestMain::GetWinterSchedule => {
+
+                        response_channel.send(ResponseMain::WinterSchedule { sched: fsm.winter().to_vec() }).await;
+
+                    }
+                    RequestMain::GetBrightnessSchedule => {
+
+                        response_channel.send(ResponseMain::BrightnessSchedule { sched: fsm.brightness().to_vec() }).await;
+
+                    }
+                    RequestMain::SetSummerSchedule(v) => {
+                        fsm.set_summer_schedule(v);
+                    }
+                    RequestMain::SetWinterSchedule(v) => {
+                        fsm.set_winter_schedule(v);
+                    }
+                    RequestMain::SetBrightnessSchedule(v) => {
+                        fsm.set_brightness_schedule(v);
                     }
                 }
             }
@@ -1686,7 +2119,7 @@ async fn main(spawner: Spawner) {
 
                     if state_just_changed || mode_button.just_released() {
 
-                        led_channel.send(RGBState::CrossFade { from: Color { r: 0, g: 255, b: 0 }, to: Color { r: 255, g: 255, b: 0 }, duration: 5000 }).await;
+                        led_channel.send(RGBState::CrossFade { from: Color { r: 255, g: 255, b: 0 }, to: Color { r: 0, g: 255, b: 0 }, duration: 5000 }).await;
 
                         Timer::after(Duration::from_millis(100)).await; //Give the led thread time
 

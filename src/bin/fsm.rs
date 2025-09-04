@@ -525,5 +525,20 @@ impl FSM {
         storages::save_to_page(SCHEDULE_ADDRESS, (&self.variant, &self.summer, &self.winter, &self.brightness));
     }
 
+    pub(crate) fn set_summer_schedule(& mut self, schedule: Vec<ScheduleEntry>) {
+        self.summer = schedule;
+        self.save();
+    }
+
+    pub(crate) fn set_winter_schedule(& mut self, schedule: Vec<ScheduleEntry>) {
+        self.winter = schedule;
+        self.save();
+    }
+
+    pub(crate) fn set_brightness_schedule(& mut self, schedule: Vec<BrightnessEntry>) {
+        self.brightness = schedule;
+        self.save();
+    }
+
 
 }

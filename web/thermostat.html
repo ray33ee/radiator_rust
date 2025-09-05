@@ -146,8 +146,44 @@
             </div>
           </div>
 
+
+
           
         </section>
+
+
+
+      <!-- Boost -->
+      <section class="group">
+        <h3>Boost Duration</h3>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Short boost duration (minutes)</div>
+            <div class="value">Set how long a short boost runs</div>
+          </div>
+          <div class="right">
+            <input type="number" id="short-boost-min" min="1" max="60" value="{{1}}" />
+            <form id="short-boost-form">
+              <button class="btn btn-primary" type="submit">Set</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Long boost duration (minutes)</div>
+            <div class="value">Set how long a long boost runs</div>
+          </div>
+          <div class="right">
+            <input type="number" id="long-boost-min" min="1" max="60" value="{{2}}" />
+            <form id="long-boost-form">
+              <button class="btn btn-primary" type="submit">Set</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
       </div>
     </main>
   </div>
@@ -159,6 +195,25 @@
       e.preventDefault();
       const v = parseFloat(document.getElementById('set-thermo-input').value, 10) || 0;
       try { await fetch('/thermostat?set_thermostat=' + encodeURIComponent(v), { method: 'POST' }); } catch(e){}
+    });
+
+
+    // Short boost duration
+    document.getElementById('short-boost-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const mins = parseInt(document.getElementById('short-boost-min').value, 10) || 0;
+      try {
+        await fetch('/thermostat?short_duration=' + encodeURIComponent(mins), { method: 'POST' });
+      } catch (err) { console.error('Failed to set short boost', err); }
+    });
+
+    // Long boost duration
+    document.getElementById('long-boost-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const mins = parseInt(document.getElementById('long-boost-min').value, 10) || 0;
+      try {
+        await fetch('/thermostat?long_duration=' + encodeURIComponent(mins), { method: 'POST' });
+      } catch (err) { console.error('Failed to set long boost', err); }
     });
   </script>
 </body>

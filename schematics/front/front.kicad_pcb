@@ -100,7 +100,7 @@
 		(pad_to_mask_clearance 0)
 		(allow_soldermask_bridges_in_footprints no)
 		(tenting front back)
-		(grid_origin 131.05 99)
+		(grid_origin 134.25 87.375)
 		(pcbplotparams
 			(layerselection 0x00000000_00000000_55555555_5755f5ff)
 			(plot_on_all_layers_selection 0x00000000_00000000_00000000_00000000)
@@ -5057,7 +5057,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC_7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R14"
-			(at -2.875 0.05 0)
+			(at -2.875 0 0)
 			(layer "F.SilkS")
 			(uuid "9b56baae-6806-488a-94d5-774a0d6b7a4c")
 			(effects
@@ -11681,6 +11681,28 @@
 			(uuid "2497a04c-7163-4bfd-9c0b-3d1636d7f8e9")
 		)
 		(embedded_fonts no)
+	)
+	(gr_rect
+		(start 133.95 86.975)
+		(end 138.05 91.675)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill yes)
+		(layer "F.Mask")
+		(uuid "5873dc0e-7d4a-465d-9957-109f12d07731")
+	)
+	(gr_rect
+		(start 128.15 85.175)
+		(end 130.05 91.075)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill yes)
+		(layer "F.Mask")
+		(uuid "f7c95290-d043-4c9b-9e71-97f911241aa0")
 	)
 	(gr_line
 		(start 151.05 69)

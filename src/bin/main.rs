@@ -118,6 +118,7 @@ static THERMOSTAT_HTML: &[u8] = core::include_bytes!("../../web/thermostat.html"
 static NETWORK_HTML: &[u8] = core::include_bytes!("../../web/network.html");
 static SUMMER_HTML: &[u8] = core::include_bytes!("../../web/summer.html");
 static WINTER_HTML: &[u8] = core::include_bytes!("../../web/winter.html");
+static BRIGHTNESS_HTML: &[u8] = core::include_bytes!("../../web/brightness.html");
 static STYLES_CSS: &[u8] = core::include_bytes!("../../web/styles.css");
 static FAVICON: &[u8] = core::include_bytes!("../../web/favicon.png");
 
@@ -142,11 +143,11 @@ async fn world_time_task(
 
         let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
 
-        //let world_time_api_dns = "worldtimeapi.org";
-        //let world_time_api_port = 80;
+        let world_time_api_dns = "worldtimeapi.org";
+        let world_time_api_port = 80;
 
-        let world_time_api_dns = "192.168.1.111";
-        let world_time_api_port = 8080;
+        //let world_time_api_dns = "192.168.1.111";
+        //let world_time_api_port = 8080;
 
         if let Ok(time_api_addrs) = stack.dns_query(world_time_api_dns, smoltcp::wire::DnsQueryType::A).await {
             if time_api_addrs.len() > 0 {
@@ -331,29 +332,28 @@ async fn send_favicon<'a>(socket: & mut TcpSocket<'a>) {
 }
 
 //todo: fix the length parameter so it matches the length of a templated file
-async fn send_template<'a, 'x>(mime: & str, template: & [u8], socket: & mut TcpSocket<'a>, replacer: & 'x alloc::vec::Vec<& 'x str>) {
+async fn send_template<'a, 'x>(mime: & str, template: & [u8], socket: & mut TcpSocket<'a>, replacer: & 'x alloc::vec::Vec<& 'x str>) -> Result<(), embassy_net::tcp::Error> {
 
     use embedded_io_async::Write;
 
-
-    socket.write_all(b"HTTP/1.1 200 OK\r\n").await.unwrap();
-    socket.write_all(b"Content-Type: ").await.unwrap();
-    socket.write_all(mime.as_bytes()).await.unwrap();
-    socket.write_all(b"; charset=utf-8\r\n").await.unwrap();
+    socket.write_all(b"HTTP/1.1 200 OK\r\n").await?;
+    socket.write_all(b"Content-Type: ").await?;
+    socket.write_all(mime.as_bytes()).await?;
+    socket.write_all(b"; charset=utf-8\r\n").await?;
 
     // 2) Content length
 
     let length = template.len() - (replacer.len() % 10) * 5 - (replacer.len() / 10) * 6 + replacer.iter().map(|&x| x.len()).sum::<usize>();
 
-    socket.write_all(b"Content-Length: ").await.unwrap();
-    socket.write_all(format!("{}", length).as_bytes()).await.unwrap();
-    socket.write_all(b"\r\n").await.unwrap();
+    socket.write_all(b"Content-Length: ").await?;
+    socket.write_all(format!("{}", length).as_bytes()).await?;
+    socket.write_all(b"\r\n").await?;
 
     // 3) Connection header
-    socket.write_all(b"Connection: close\r\n").await.unwrap();
+    socket.write_all(b"Connection: close\r\n").await?;
 
     // 4) End of headers
-    socket.write_all(b"\r\n").await.unwrap();
+    socket.write_all(b"\r\n").await?;
 
     // 5) Body
 
@@ -364,7 +364,7 @@ async fn send_template<'a, 'x>(mime: & str, template: & [u8], socket: & mut TcpS
 
     // The first chunk is always literal HTML
     if let Some(first) = parts.next() {
-        socket.write_all(first.as_bytes()).await.unwrap();
+        socket.write_all(first.as_bytes()).await?;
     }
 
     // Every other chunk starts with a token (maybe) followed by "}}"
@@ -372,16 +372,17 @@ async fn send_template<'a, 'x>(mime: & str, template: & [u8], socket: & mut TcpS
         if let Some((token, rest)) = part.split_once("}}") {
             // (Don’t send the token itself for now)
             let index = token.trim().parse::<usize>().unwrap();
-            socket.write_all(replacer[index].as_bytes()).await.unwrap();
+            socket.write_all(replacer[index].as_bytes()).await?;
 
-            socket.write_all(rest.as_bytes()).await.unwrap();
+            socket.write_all(rest.as_bytes()).await?;
         } else {
             // No closing braces — treat as literal
-            socket.write_all(b"{{").await.unwrap();
-            socket.write_all(part.as_bytes()).await.unwrap();
+            socket.write_all(b"{{").await?;
+            socket.write_all(part.as_bytes()).await?;
         }
     }
 
+    Ok(())
     //socket.write_all(INDEX_HTML).await.unwrap();
 }
 
@@ -424,6 +425,12 @@ async fn send_200<'a>(socket: &mut TcpSocket<'a>, body: Option<& str>) {
 }
 
 async fn send_schedule<'a>(socket: &mut TcpSocket<'a>, schedule: & Vec<ScheduleEntry>) {
+
+    send_200(socket, Some(serde_json::to_string(schedule).unwrap().as_str())).await;
+
+}
+
+async fn send_brightness_schedule<'a>(socket: &mut TcpSocket<'a>, schedule: & Vec<BrightnessEntry>) {
 
     send_200(socket, Some(serde_json::to_string(schedule).unwrap().as_str())).await;
 
@@ -490,13 +497,13 @@ enum ResponseMain {
     Settings {
         reset_reason: u32,
         core_temperature: Option<f32>,
-        short_boost_duration: u32,
-        long_boost_duration: u32,
         current_time: Option<OffsetDateTime>,
         brightness: u8,
     },
     Thermostat {
         thermostat: f32,
+        short_duration: u32,
+        long_duration: u32,
     },
     Network {
         mac_addr: [u8; 6],
@@ -655,7 +662,7 @@ async fn webserver_task(
                                     ];
 
 
-                                    send_template("text/html", INDEX_HTML, & mut socket, &cards).await;
+                                    let _ = send_template("text/html", INDEX_HTML, & mut socket, &cards).await;
                                 } else {
                                     send_404(& mut socket).await;
                                 }
@@ -698,7 +705,7 @@ async fn webserver_task(
 
                                 request.send(RequestMain::SettingsPage).await;
 
-                                if let ResponseMain::Settings { reset_reason, core_temperature, short_boost_duration, long_boost_duration, current_time, brightness } = response.receive().await {
+                                if let ResponseMain::Settings { reset_reason, core_temperature, current_time, brightness } = response.receive().await {
 
                                     let reset_code = format!("{}", reset_reason);
 
@@ -718,6 +725,7 @@ async fn webserver_task(
                                         13 => "Reset due to efuse error",
                                         14 => "Reset due to power glitch detected",
                                         15 => "Reset due to CPU lock up (double exception)",
+                                        21 => "Reset due to flashing device over USB or something maybe?",
                                         _ => "Unknown reset reason",
                                     };
 
@@ -726,17 +734,14 @@ async fn webserver_task(
                                         None => format!("Unknown"),
                                     };
 
-                                    let short = format!("{}", short_boost_duration / 60u32);
-                                    let long = format!("{}", long_boost_duration / 60u32);
-
                                     let current_time = current_time.map(|t| format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.year(), t.month() as u32, t.day(), t.hour(), t.minute(), t.second())).unwrap_or_else(|| format!("Error"));
 
                                     let brightness = format!("{}", brightness);
 
-                                    let cards = vec![reset_code.as_str(), reset_reason, cpu_tsense.as_str(), brightness.as_str(), current_time.as_str(), short.as_str(), long.as_str()];
+                                    let cards = vec![reset_code.as_str(), reset_reason, cpu_tsense.as_str(), brightness.as_str(), current_time.as_str()];
 
 
-                                    send_template("text/html", SETTINGS_HTML, & mut socket, &cards).await;
+                                    let _ = send_template("text/html", SETTINGS_HTML, & mut socket, &cards).await;
                                 } else {
                                     send_404(&mut socket).await;
                                 }
@@ -769,16 +774,6 @@ async fn webserver_task(
                                         println!("rainbow   !");
                                         send_200(& mut socket, None).await;
                                     }
-                                    (Some("short_duration"), Some(duration)) => {
-                                        request.send(RequestMain::SetShortDuration(duration.parse::<u32>().unwrap() * 60)).await;
-                                        println!("Set short duration");
-                                        send_200(& mut socket, None).await;
-                                    }
-                                    (Some("long_duration"), Some(duration)) => {
-                                        request.send(RequestMain::SetLongDuration(duration.parse::<u32>().unwrap() * 60)).await;
-                                        println!("Set long duration");
-                                        send_200(& mut socket, None).await;
-                                    }
                                     (Some("action"), Some("safemode")) => {
                                         request.send(RequestMain::ModeSafe).await;
                                         println!("Safe mode mode");
@@ -800,7 +795,7 @@ async fn webserver_task(
                                     let cards = vec![max.as_str(), is_locked.as_str(), pos.as_str()];
 
 
-                                    send_template("text/html", CALIBRATE_HTML, & mut socket, &cards).await;
+                                    let _ = send_template("text/html", CALIBRATE_HTML, & mut socket, &cards).await;
                                 } else {
                                     send_404(& mut socket).await;
                                 }
@@ -866,18 +861,40 @@ async fn webserver_task(
                             ("GET", "/thermostat") => {
                                 request.send(RequestMain::ThermostatInfo).await;
 
-                                if let ResponseMain::Thermostat { thermostat } = response.receive().await {
+                                if let ResponseMain::Thermostat { thermostat, short_duration, long_duration } = response.receive().await {
 
                                     let thermostat = format!("{}", thermostat);
 
-                                    let cards = vec![thermostat.as_str()];
+                                    let short = format!("{}", short_duration / 60u32);
+                                    let long = format!("{}", long_duration / 60u32);
+
+                                    let cards = vec![thermostat.as_str(), short.as_str(), long.as_str()];
 
 
-                                    send_template("text/html", THERMOSTAT_HTML, & mut socket, &cards).await;
+                                    let _ = send_template("text/html", THERMOSTAT_HTML, & mut socket, &cards).await;
                                 } else {
                                     send_404(& mut socket).await;
                                 }
 
+                            }
+                            ("POST", "/thermostat") => {
+                                match (key, value) {
+                                    (Some("set_thermostat"), Some(temperature)) => {
+                                        request.send(RequestMain::SetThermostat(temperature.parse::<f32>().unwrap())).await;
+                                        send_200(& mut socket, None).await;
+                                    }
+                                    (Some("short_duration"), Some(duration)) => {
+                                        request.send(RequestMain::SetShortDuration(duration.parse::<u32>().unwrap() * 60)).await;
+                                        println!("Set short duration");
+                                        send_200(& mut socket, None).await;
+                                    }
+                                    (Some("long_duration"), Some(duration)) => {
+                                        request.send(RequestMain::SetLongDuration(duration.parse::<u32>().unwrap() * 60)).await;
+                                        println!("Set long duration");
+                                        send_200(& mut socket, None).await;
+                                    }
+                                    _ => send_404(&mut socket).await,
+                                }
                             }
                             ("GET", "/summer") => {
 
@@ -886,7 +903,7 @@ async fn webserver_task(
                                     (None, None) => {
                                         let cards = vec![];
 
-                                        send_template("text/html", SUMMER_HTML, & mut socket, &cards).await;
+                                        let _ = send_template("text/html", SUMMER_HTML, & mut socket, &cards).await;
                                     }
                                     (Some("start"), Some("true")) => {
 
@@ -924,7 +941,7 @@ async fn webserver_task(
                                     (None, None) => {
                                         let cards = vec![];
 
-                                        send_template("text/html", WINTER_HTML, & mut socket, &cards).await;
+                                        let _ = send_template("text/html", WINTER_HTML, & mut socket, &cards).await;
                                     }
                                     (Some("start"), Some("true")) => {
 
@@ -955,14 +972,43 @@ async fn webserver_task(
 
                                 send_200(& mut socket, None).await;
                             }
-                            ("POST", "/thermostat") => {
+                            ("GET", "/brightness") => {
+
+
                                 match (key, value) {
-                                    (Some("set_thermostat"), Some(temperature)) => {
-                                        request.send(RequestMain::SetThermostat(temperature.parse::<f32>().unwrap())).await;
-                                        send_200(& mut socket, None).await;
+                                    (None, None) => {
+                                        let cards = vec![];
+
+                                        let _ = send_template("text/html", BRIGHTNESS_HTML, & mut socket, &cards).await;
                                     }
-                                    _ => send_404(&mut socket).await,
+                                    (Some("start"), Some("true")) => {
+
+                                        request.send(RequestMain::GetBrightnessSchedule).await;
+
+                                        if let ResponseMain::BrightnessSchedule { sched } = response.receive().await {
+
+                                            send_brightness_schedule(& mut socket, &sched).await;
+
+                                        } else {
+                                            send_404(& mut socket).await;
+                                        }
+
+                                    }
+                                    _ => {
+                                        send_404(&mut socket).await;
+                                    }
                                 }
+
+
+                            }
+                            ("POST", "/brightness") => {
+                                println!("'{:?}'", body);
+
+                                let v: Vec<BrightnessEntry> = serde_json::from_str(body).unwrap();
+
+                                request.send(RequestMain::SetBrightnessSchedule(v)).await;
+
+                                send_200(& mut socket, None).await;
                             }
                             ("GET", "/network") => {
                                 request.send(RequestMain::NetworkInfo).await;
@@ -975,7 +1021,7 @@ async fn webserver_task(
                                     let cards = vec![mac.as_str()];
 
 
-                                    send_template("text/html", NETWORK_HTML, & mut socket, &cards).await;
+                                    let _ = send_template("text/html", NETWORK_HTML, & mut socket, &cards).await;
                                 } else {
                                     send_404(& mut socket).await;
                                 }
@@ -1060,13 +1106,28 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
+    /* Pin definitions */
+
+    let RED_PIN = peripherals.GPIO10;
+    let GREEN_PIN = peripherals.GPIO20;
+    let BLUE_PIN = peripherals.GPIO21;
+
+    let MODE_BUTTON_PIN = peripherals.GPIO8;
+
+    let ONE_WIRE_PIN = peripherals.GPIO9;
+
+    let COIL_A1_PIN = peripherals.GPIO0;
+    let COIL_A2_PIN = peripherals.GPIO3;
+    let COIL_B1_PIN = peripherals.GPIO1;
+    let COIL_B2_PIN = peripherals.GPIO2;
+
     /* Setup LED pins */
 
     print!("LEDs...");
 
-    let red = Output::new(peripherals.GPIO10, Level::High, OutputConfig::default());
-    let green = Output::new(peripherals.GPIO20, Level::High, OutputConfig::default());
-    let blue = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
+    let red = Output::new(RED_PIN, Level::High, OutputConfig::default());
+    let green = Output::new(GREEN_PIN, Level::High, OutputConfig::default());
+    let blue = Output::new(BLUE_PIN, Level::High, OutputConfig::default());
 
     let mut myledc = Ledc::new(peripherals.LEDC);
     myledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
@@ -1137,7 +1198,7 @@ async fn main(spawner: Spawner) {
 
     print!("Button...");
 
-    let button_pin = esp_hal::gpio::Input::new(peripherals.GPIO8, InputConfig::default().with_pull(Pull::Up));
+    let button_pin = esp_hal::gpio::Input::new(MODE_BUTTON_PIN, InputConfig::default().with_pull(Pull::Up));
 
     let mut mode_button = crate::mode_button::Mode::new(button_pin);
 
@@ -1147,7 +1208,7 @@ async fn main(spawner: Spawner) {
 
     print!("Temperature sensor...");
 
-    let mut thermo = Thermometer::new(peripherals.GPIO9);
+    let mut thermo = Thermometer::new(ONE_WIRE_PIN);
 
     let _ = thermo.get_temperature();
 
@@ -1177,16 +1238,7 @@ async fn main(spawner: Spawner) {
 
     print!("Init motor...");
 
-    let mut motor = {
-
-        let p1 = peripherals.GPIO0;
-        let p2 = peripherals.GPIO3;
-        let p3 = peripherals.GPIO1;
-        let p4 = peripherals.GPIO2;
-
-        Motor::new(p1, p2, p3, p4)
-
-    };
+    let mut motor = Motor::new(COIL_A1_PIN, COIL_A2_PIN, COIL_B1_PIN, COIL_B2_PIN);
 
     println!("Done.");
 
@@ -1403,8 +1455,6 @@ async fn main(spawner: Spawner) {
                         let settings = ResponseMain::Settings {
                             reset_reason: esp_hal::rom::rtc_get_reset_reason(0),
                             core_temperature: cpu_tsense.as_ref().ok().map(|x| x.get_temperature().to_celsius()),
-                            short_boost_duration: motor.short_boost(),
-                            long_boost_duration: motor.long_boost(),
                             current_time: {
 
                                 let guard = time_mutex.lock().await;
@@ -1482,6 +1532,8 @@ async fn main(spawner: Spawner) {
                     RequestMain::ThermostatInfo => {
                         let thermo = ResponseMain::Thermostat {
                             thermostat: thermo.thermostat(),
+                            short_duration: motor.short_boost(),
+                            long_duration: motor.long_boost(),
                         };
 
                         response_channel.send(thermo).await;
@@ -2006,18 +2058,24 @@ async fn main(spawner: Spawner) {
 
                     match thermo.get_temperature() {
                         Ok(actual) => {
-
-                            if actual < (thermostat - 0.25) {
-                                motor.open_valve();
-                            }
-
-                            if actual > (thermostat + 0.25) {
-                                motor.close_valve();
-                            }
-
                             fsm.change_from_schedule(current_time);
 
                             fsm.allow_request();
+
+                            if actual < (thermostat - 0.25) {
+                                if !motor.open_valve() {
+                                    fsm.force_change(fsm::State::Calibrate);
+                                }
+
+                            }
+
+                            if actual > (thermostat + 0.25) {
+                                if !motor.close_valve() {
+                                    fsm.force_change(fsm::State::Calibrate);
+                                }
+                            }
+
+
                         }
                         Err(e) => {
                             fsm.force_change(fsm::State::Warning(WarningType::TemperatureSensorError))
@@ -2036,18 +2094,23 @@ async fn main(spawner: Spawner) {
 
                     if state_just_changed {
 
-                        motor.close_valve();
+                        if !motor.close_valve() {
+                            fsm.force_change(State::Calibrate);
+                        }
+
 
                         mode_button.clear_actions();
                         mode_button.push_action(mode_button::Action::ShortBoost);
                         mode_button.push_action(mode_button::Action::LongBoost);
                         mode_button.push_action(mode_button::Action::Safe);
                         mode_button.push_action(mode_button::Action::Calibrate);
+                    } else {
+
+                        fsm.change_from_schedule(current_time);
+
+                        fsm.allow_request();
                     }
 
-                    fsm.change_from_schedule(current_time);
-
-                    fsm.allow_request();
                 }
                 crate::fsm::State::Boost(time_started, duration) => {
 
@@ -2058,19 +2121,21 @@ async fn main(spawner: Spawner) {
 
                     }
 
+                    if time_started.elapsed() > *duration {
+                        fsm.request_change(fsm::State::Start);
+                    }
+
                     if state_just_changed {
 
-                        motor.open_valve();
+                        if !motor.open_valve() {
+                            fsm.force_change(fsm::State::Calibrate);
+                        }
 
 
                         mode_button.clear_actions();
                         mode_button.push_action(mode_button::Action::Cancel);
                         mode_button.push_action(mode_button::Action::Safe);
                         mode_button.push_action(mode_button::Action::Calibrate);
-                    }
-
-                    if time_started.elapsed() > *duration {
-                        fsm.request_change(fsm::State::Start);
                     }
 
                     fsm.allow_request();
@@ -2105,15 +2170,17 @@ async fn main(spawner: Spawner) {
 
                     if state_just_changed {
 
-                        motor.open_valve();
+                        if !motor.open_valve() {
+                            fsm.force_change(fsm::State::Calibrate);
+                        }
 
 
                         mode_button.clear_actions();
                     }
 
 
-                    //FSM may only leave safe mode for warnings
-                    fsm.handle_request(|state| state.is_warning());
+                    //FSM may only leave safe mode for warnings or calibration
+                    fsm.handle_request(|state| state.is_warning() || state.is_calibrate());
                 }
                 crate::fsm::State::Descale => {
 
@@ -2127,9 +2194,18 @@ async fn main(spawner: Spawner) {
 
                     if state_just_changed {
                         //Whatever position the valve is in, open and close it
-                        motor.close_valve();
-                        motor.open_valve();
-                        motor.close_valve();
+
+                        if !motor.close_valve() {
+
+                            fsm.force_change(fsm::State::Calibrate);
+                        } else {
+
+                            motor.open_valve();
+                            motor.close_valve();
+                        }
+
+
+
 
 
                         mode_button.clear_actions();
@@ -2138,11 +2214,13 @@ async fn main(spawner: Spawner) {
                         mode_button.push_action(mode_button::Action::LongBoost);
                         mode_button.push_action(mode_button::Action::Safe);
                         mode_button.push_action(mode_button::Action::Calibrate);
+                    } else {
+
+                        fsm.change_from_schedule(current_time);
+
+                        fsm.allow_request();
                     }
 
-                    fsm.change_from_schedule(current_time);
-
-                    fsm.allow_request();
                 }
                 crate::fsm::State::Warning(code) => {
 
@@ -2176,7 +2254,11 @@ async fn main(spawner: Spawner) {
                 crate::fsm::State::Cancel => {
                     //Ignore is a special state that is the only way to exit warnings, leave boost early
                     // and manually get out of descale.
+
+
                     fsm.force_change(fsm::State::Start);
+
+
                 }
             }
 

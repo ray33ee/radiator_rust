@@ -1,0 +1,6 @@
+- Make a single page web server#
+ 	- Request information from server for live updates
+	- Make some async JS code which probes the server every 10 seconds then updates information on screen live
+	- Think hard about the relevant information: ![Mockup](sketch.png)
+	- For timers (boost time remaining, device uptime) store a time stamp and calculate the time in JS, instead of polling server every second
+- Calibrate push must as user for the number of revolutions (then they use this to determine the max position)

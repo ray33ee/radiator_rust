@@ -355,40 +355,23 @@
           </div>
         </div>
 
-
-      </section>
-
-
-      <!-- Boost -->
-      <section class="group">
-        <h3>Boost Duration</h3>
-
         <div class="item">
           <div class="left">
-            <div class="label">Short boost duration (minutes)</div>
-            <div class="value">Set how long a short boost runs</div>
+            <div class="label">Select Time</div>
+            <div class="value">Choose a custom time</div>
           </div>
           <div class="right">
-            <input type="number" id="short-boost-min" min="1" max="60" value="{{5}}" />
-            <form id="short-boost-form">
-              <button class="btn btn-primary" type="submit">Set</button>
+            <input id="picker" type="datetime-local">
+            <form id="picker-form">
+              <button class="btn btn-primary" type="submit">Upload</button>
             </form>
           </div>
         </div>
 
-        <div class="item">
-          <div class="left">
-            <div class="label">Long boost duration (minutes)</div>
-            <div class="value">Set how long a long boost runs</div>
-          </div>
-          <div class="right">
-            <input type="number" id="long-boost-min" min="1" max="60" value="{{6}}" />
-            <form id="long-boost-form">
-              <button class="btn btn-primary" type="submit">Set</button>
-            </form>
-          </div>
-        </div>
+
       </section>
+
+
 
       <!-- Danger zone -->
       <section class="group danger">
@@ -452,6 +435,19 @@
     </main>
   </div>
 
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const input = document.getElementById("picker");
+
+    const now = new Date();
+    const offset = now.getTimezoneOffset();
+    const local = new Date(now.getTime() - offset * 60000)
+                     .toISOString().slice(0,16);
+
+    input.value = local;
+  });
+</script>
+
   <script>
     document.getElementById('sync-form').addEventListener('submit', async function (e) {
       e.preventDefault(); // stop normal navigation
@@ -460,6 +456,31 @@
       const localEpoch = Math.floor((now.getTime() - now.getTimezoneOffset() * 60_000) / 1000);
 
       const url = '/settings?sync_time=' + localEpoch;
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to sync time', err);
+      }
+    });
+
+    document.getElementById('picker-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const input = document.getElementById("picker").value;
+
+
+      // Local time from the input
+      const local = new Date(input);
+
+      // Add the timezone offset back (reverse of when setting value)
+      const utc = local.getTime() - local.getTimezoneOffset() * 60000;
+
+      const epoch = Math.floor(utc / 1000);
+
+      const url = '/settings?sync_time=' + epoch;
 
       try {
         await fetch(url, {
@@ -520,23 +541,6 @@
       } catch (err) { console.error('Failed to start rainbow', err); }
     });
 
-    // Short boost duration
-    document.getElementById('short-boost-form').addEventListener('submit', async function (e) {
-      e.preventDefault();
-      const mins = parseInt(document.getElementById('short-boost-min').value, 10) || 0;
-      try {
-        await fetch('/settings?short_duration=' + encodeURIComponent(mins), { method: 'POST' });
-      } catch (err) { console.error('Failed to set short boost', err); }
-    });
-
-    // Long boost duration
-    document.getElementById('long-boost-form').addEventListener('submit', async function (e) {
-      e.preventDefault();
-      const mins = parseInt(document.getElementById('long-boost-min').value, 10) || 0;
-      try {
-        await fetch('/settings?long_duration=' + encodeURIComponent(mins), { method: 'POST' });
-      } catch (err) { console.error('Failed to set long boost', err); }
-    });
 
     // Safe mode
     document.getElementById('safe-form').addEventListener('submit', async function (e) {

@@ -56,15 +56,19 @@ impl<'a> Motor<'a> {
         let _ = self.stepper.deenergise();
     }
 
-    fn move_valve(& mut self, to_position: u32) {
+    fn move_valve(& mut self, to_position: u32) -> bool {
+
+        if storages::is_locked() {
+            return false;
+        }
 
         if self.position == to_position {
-            return;
+            return true;
         }
 
         //Do not move past absolute maximum to protect enclosure
         if to_position > ABSOLUTE_MAX_POSITION {
-            return;
+            return true;
         }
 
         let revs = to_position as i32 - self.position as i32;
@@ -81,15 +85,15 @@ impl<'a> Motor<'a> {
 
         self.position = to_position;
 
-
+        true
     }
 
-    pub(crate) fn open_valve(& mut self) {
-        self.move_valve(0);
+    pub(crate) fn open_valve(& mut self) -> bool {
+        self.move_valve(0)
     }
 
-    pub(crate) fn close_valve(& mut self) {
-        self.move_valve(self.max_position);
+    pub(crate) fn close_valve(& mut self) -> bool {
+        self.move_valve(self.max_position)
     }
 
     pub(crate) fn set_max_position(& mut self, max_position: u32) {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Radiator Controller • Summer</title>
+  <title>Radiator Controller • Brightness</title>
   <link rel="stylesheet" href="/styles.css">
   <link rel="icon" href="/favicon.png" type="image/png">
   <style>
@@ -156,7 +156,7 @@
         <div>Radiator Controller</div>
       </div>
       <div class="right">
-        <span class="label">Summer</span>
+        <span class="label">Brightness</span>
       </div>
     </header>
 
@@ -171,11 +171,11 @@
         <div class="nav-group">
           <div class="nav-title">Controls</div>
           <a href="/thermostat">Thermostat</a>
-          <a href="/summer">Schedule</a>
+          <a href="/brightness">Schedule</a>
           <div class="sub">
-            <a class="active" href="/summer">Summer</a>
+            <a href="/summer">Summer</a>
             <a href="/winter">Winter</a>
-            <a href="/brightness">Brightness</a>
+            <a class="active" href="/brightness">Brightness</a>
           </div>
           <a href="/calibrate">Calibrate</a>
         </div>
@@ -210,11 +210,7 @@
                 <input id="start" type="time" required>
                 <span>→</span>
                 <input id="end" type="time" required>
-                <select id="state">
-                  <option value="Regulate">regulate</option>
-                  <option value="Off">off</option>
-                  <option value="Descale">descale</option>
-                </select>
+                <input type="number" id="level" min="1" max="100" value="50" />
                 <button class="btn btn-primary" type="submit">Add</button>
               </form>
             </div>
@@ -254,19 +250,19 @@ let slots = [];
 const pad2 = n => (n < 10 ? '0' + n : '' + n);
 const toMin = hhmm => { const [h,m] = hhmm.split(':').map(Number); return h*60 + m; };
 const toHHMM = mins => `${pad2(Math.floor(mins/60))}:${pad2(mins%60)}`;
-const formatLine = s => `${IDX2WWW[s.day]},${toHHMM(s.start)},${toHHMM(s.end)},${s.state}`;
+const formatLine = s => `${IDX2WWW[s.day]},${toHHMM(s.start)},${toHHMM(s.end)},${s.level}`;
 
 const overlaps = (a, b) => a.start < b.end && b.start < a.end;
 
 
 async function fetchScheduleOnLoad(){
   try {
-    const res = await fetch('/summer?start=true', { cache: 'no-store' });
+    const res = await fetch('/brightness?start=true', { cache: 'no-store' });
     if (!res.ok) return;
     const data = await res.json(); // { schedule: [{day,start,end,state}, ...] }
     if (Array.isArray(data)) {
       slots = data.map(s => ({
-        day: s.day-1|0, start: s.start|0, end: s.end|0, state: String(s.mode)
+        day: s.day-1|0, start: s.start|0, end: s.end|0, level: s.level
       }));
       normalize();
     }
@@ -287,7 +283,7 @@ function hasConflict(candidate, arr) {
   // conflict = same day, different state, and time overlap
   for (const s of arr) {
     if (s.day !== candidate.day) continue;
-    if (s.state === candidate.state) continue; // same-state overlaps are allowed (will merge)
+    if (s.level === candidate.level) continue; // same-state overlaps are allowed (will merge)
     if (overlaps(s, candidate)) return s;      // return the conflicting slot
   }
   return null;
@@ -340,7 +336,7 @@ function render() {
       <td>${DAYS[s.day]}</td>
       <td>${toHHMM(s.start)}</td>
       <td>${toHHMM(s.end)}</td>
-      <td>${s.state}</td>
+      <td>${s.level}</td>
       <td><button class="btn btn-warn" data-i="${i}">Delete</button></td>`;
     tbody.appendChild(tr);
   });
@@ -368,7 +364,7 @@ function mergeSameState(arr) {
   while (i < arr.length) {
     const cur = {...arr[i++]};
     while (i < arr.length && arr[i].day === cur.day &&
-           arr[i].state === cur.state && arr[i].start <= cur.end) {
+           arr[i].level === cur.level && arr[i].start <= cur.end) {
       cur.end = Math.max(cur.end, arr[i].end);
       i++;
     }
@@ -384,7 +380,7 @@ function findConflicts(arr) {
     const daySlots = arr.filter(s => s.day === d);
     for (let i = 0; i < daySlots.length - 1; i++) {
       const a = daySlots[i], b = daySlots[i+1];
-      if (b.start < a.end && a.state !== b.state) {
+      if (b.start < a.end && a.level !== b.level) {
         conflicts.push({ day: d, a, b });
       }
     }
@@ -414,7 +410,7 @@ function logSlots() {
   console.log("Current schedule:");
   slots.forEach((s, i) => {
     console.log(
-      `${i + 1}. ${DAYS[s.day]} ${toHHMM(s.start)}–${toHHMM(s.end)} → ${s.state}`
+      `${i + 1}. ${DAYS[s.day]} ${toHHMM(s.start)}–${toHHMM(s.end)} → ${s.level}`
     );
   });
 }
@@ -427,13 +423,13 @@ async function postSchedule() {
     day: s.day+1,        // integer: 0=Mon … 6=Sun
     start: s.start,    // integer minutes since midnight
     end: s.end,        // integer minutes since midnight
-    mode: s.state     // string: "regulate" | "off" | "descale"
+    level: s.level     // string: "regulate" | "off" | "descale"
   }));
 
   const payload = { schedule: scheduleArray };
 
   try {
-    const res = await fetch('/summer', {
+    const res = await fetch('/brightness', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(scheduleArray)
@@ -456,19 +452,19 @@ document.getElementById('slot-add-form').addEventListener('submit', (e) => {
   const dayIdx = DAYS.indexOf(document.getElementById('day').value);
   const start = toMin(document.getElementById('start').value);
   const end   = toMin(document.getElementById('end').value);
-  const state = document.getElementById('state').value;
+  const level = parseInt(document.getElementById('level').value);
 
   if (isNaN(start) || isNaN(end) || (start >= end && end != 0)) {
     showToast('Please enter a valid time range (start must be before end).');
     return;
   }
 
-  const candidate = { day: dayIdx, start, end, state };
+  const candidate = { day: dayIdx, start, end, level };
   const conflict = hasConflict(candidate, slots);
   if (conflict) {
     showToast(
       `Conflicts with existing ${DAYS[conflict.day]} `
-      + `${toHHMM(conflict.start)}–${toHHMM(conflict.end)} (${conflict.state}).`
+      + `${toHHMM(conflict.start)}–${toHHMM(conflict.end)} (${conflict.level}).`
     );
     return; // do NOT add
   }

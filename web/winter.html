@@ -456,7 +456,7 @@ document.getElementById('slot-add-form').addEventListener('submit', (e) => {
   const end   = toMin(document.getElementById('end').value);
   const state = document.getElementById('state').value;
 
-  if (isNaN(start) || isNaN(end) || start >= end) {
+  if (isNaN(start) || isNaN(end) || (start >= end && end != 0)) {
     showToast('Please enter a valid time range (start must be before end).');
     return;
   }

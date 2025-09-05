@@ -116,8 +116,15 @@ impl ScheduleEntry {
 
     fn is_in(&self, current_time: OffsetDateTime) -> bool {
         if current_time.weekday() == self.day {
-            let current_minutes = current_time.hour() as u16 * 60 + current_time.minute() as u16;
-            if current_minutes > self.start && current_minutes < self.end {
+            let current_minutes = current_time.hour() as u32 * 3600 + current_time.minute() as u32 * 60 + current_time.second() as u32;
+
+            let end = if self.end == 0 {
+                24*60
+            } else {
+                self.end
+            };
+
+            if current_minutes > self.start as u32 * 60 && current_minutes <= end as u32 * 60 {
                 return true;
             }
         }
@@ -186,8 +193,15 @@ impl BrightnessEntry {
 
     fn is_in(&self, current_time: OffsetDateTime) -> bool {
         if current_time.weekday() == self.day {
-            let current_minutes = current_time.hour() as u16 * 60 + current_time.minute() as u16;
-            if current_minutes > self.start && current_minutes < self.end {
+            let current_minutes = current_time.hour() as u32 * 3600 + current_time.minute() as u32 * 60 + current_time.second() as u32;
+
+            let end = if self.end == 0 {
+                24*60
+            } else {
+                self.end
+            };
+
+            if current_minutes > self.start as u32 * 60 && current_minutes <= end as u32 * 60 {
                 return true;
             }
         }

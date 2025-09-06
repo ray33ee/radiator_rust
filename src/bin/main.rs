@@ -146,9 +146,6 @@ async fn world_time_task(
         let world_time_api_dns = "worldtimeapi.org";
         let world_time_api_port = 80;
 
-        //let world_time_api_dns = "192.168.1.111";
-        //let world_time_api_port = 8080;
-
         if let Ok(time_api_addrs) = stack.dns_query(world_time_api_dns, smoltcp::wire::DnsQueryType::A).await {
             if time_api_addrs.len() > 0 {
 
@@ -1356,7 +1353,7 @@ async fn main(spawner: Spawner) {
                         {
                             let mut guard = time_mutex.lock().await;
 
-                            if guard.date_time().is_some() || time_api_start.elapsed().as_secs() > 7 {
+                            if guard.date_time().is_some() || time_api_start.elapsed().as_secs() > 15 {
                                 break;
                             }
                         }

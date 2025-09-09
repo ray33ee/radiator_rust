@@ -1,39 +1,23 @@
-
-use esp_hal::gpio::OutputPin;
-use dht22_sensor::{Dht22};
-use esp_hal::{
-    delay::Delay,
-    gpio::{DriveMode, Output, OutputConfig, Pull, Flex},
-};
+use esp_hal::Blocking;
+use aht20_driver::AHT20Initialized;
+use esp_hal::i2c::master::I2c;
 
 pub(crate) struct Thermometer<'a> {
-    sensor: Dht22<Flex<'a>, Delay>,
+    //sensor: Dht22<Flex<'a>, Delay>,
+
+    sensor: AHT20Initialized<'a, I2c<'a, Blocking>>,
+
     last_read: Option<f32>,
     thermostat: f32,
 }
 
 impl<'a> Thermometer<'a> {
-    pub(crate) fn new<W: OutputPin + 'a>(one_wire: W) -> Self {
-        //Setup the pin as input/output
-        let od_config = OutputConfig::default()
-            .with_drive_mode(DriveMode::OpenDrain)
-            .with_pull(Pull::None);
-
-        let od_for_dht22 = Output::new(
-            one_wire, esp_hal::gpio::Level::High, od_config
-        ).into_flex();
-
-        od_for_dht22.peripheral_input();
-
-        //Create the delay object and make the dht22
-        let delay = Delay::new();
-
-        let dht22 = Dht22::new(od_for_dht22, delay);
+    pub(crate) fn new(sensor: AHT20Initialized<'a, I2c<'a, Blocking>>) -> Self {
 
         let thermostat = crate::storages::load_from_page(crate::storages::THERMO_ADDRESS).unwrap_or_else(|| 23.0);
 
         Self {
-            sensor: dht22,
+            sensor,
             last_read: None,
             thermostat,
         }
@@ -42,7 +26,7 @@ impl<'a> Thermometer<'a> {
 
     pub(crate) fn get_temperature(&mut self) -> Result<f32, ()> {
 
-        match self.sensor.read() {
+        match self.sensor.measure(& mut embassy_time::Delay) {
             Ok(reading) => {
                 self.last_read = Some(reading.temperature);
             },

@@ -1,16 +1,14 @@
-[target.riscv32imc-unknown-none-elf]
-runner = "espflash flash --monitor --chip esp32c3 --partition-table partition_table.csv"
+[target.xtensa-esp32s2-none-elf]
+runner = "espflash flash --monitor --chip esp32s2 --partition-table partition_table.csv"
 
 [env]
 
 [build]
 rustflags = [
-  # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
-  # NOTE: May negatively impact performance of produced code
-  "-C", "force-frame-pointers",
+  "-C", "link-arg=-nostartfiles",
 ]
 
-target = "riscv32imc-unknown-none-elf"
+target = "xtensa-esp32s2-none-elf"
 
 [unstable]
 build-std = ["alloc", "core"]

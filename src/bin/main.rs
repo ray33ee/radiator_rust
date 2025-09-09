@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(asm_experimental_arch)]
 #![deny(
     clippy::mem_forget,
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
@@ -36,7 +37,6 @@ mod flashstore;
 
 use embassy_futures::select::Either::First;
 use esp_println::{println, print};
-use esp_backtrace as _;
 use alloc::{format, vec};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -64,6 +64,7 @@ use esp_hal::{
         Level,
         Output,
     },
+    uart::{Uart}
 };
 use crate::{
     motor::Motor,
@@ -76,7 +77,6 @@ use crate::{
     rgb::{State as RGBState, RGBLED, Color},
     rtc::RTC,
     thermo::Thermometer,
-    commands::{Function, Message},
 
 };
 use embassy_executor::Spawner;
@@ -92,10 +92,8 @@ use embassy_net::{
     StackResources
 };
 use smoltcp::wire::IpEndpoint;
-use core::fmt::Write;
 use time::OffsetDateTime;
-use crate::fsm::{State, WarningType};
-use crate::storages::is_locked;
+use crate::fsm::{CalibrateType, State, WarningType};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -122,6 +120,7 @@ static BRIGHTNESS_HTML: &[u8] = core::include_bytes!("../../web/brightness.html"
 static STYLES_CSS: &[u8] = core::include_bytes!("../../web/styles.css");
 static FAVICON: &[u8] = core::include_bytes!("../../web/favicon.png");
 
+pub(crate) const DUTY_MAX: u32 = 1 << 12;
 
 #[embassy_executor::task]
 async fn net_task(mut runner: embassy_net::Runner<'static, WifiDevice<'static>>) -> ! {
@@ -224,80 +223,6 @@ Connection: close\r\n\
     }
 }
 
-
-///
-/// Server takes clients, reads the message, sends a response then closes the connection
-///
-/// The message is sent to the main loop, the function is executed, and the return string is
-/// sent back to this thread to send to the client.
-///
-#[embassy_executor::task]
-async fn server_task(
-    stack: Stack<'static>,
-    msg: & 'static Channel<NoopRawMutex, Message, 1>,
-    ret:  & 'static Channel<NoopRawMutex, String, 1>,
-
-) -> ! {
-    let mut rx_buf = [0u8; 3024];
-    let mut tx_buf = [0u8; 3024];
-
-    loop {
-        let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
-
-        socket.set_timeout(Some(Duration::from_secs(10)));
-
-        if let Err(e) = socket.accept(8080).await {
-            println!("Accept failed: {:?}", e);
-            continue;
-        }
-
-        let mut buf = [0u8; 3024];
-
-        if let Ok(n) = socket.read(& mut buf).await {
-            if n != 0 {
-                if let Ok(s) = core::str::from_utf8(&buf[..n]) {
-                    if let Ok(message) = serde_json::from_str::<Message>(s) {
-                        use embedded_io_async::Write;
-                        println!("Message: {:?}", message);
-
-                        //Send the message to the main thread
-                        assert!(!msg.is_full());
-
-                        msg.send(message).await;
-
-                        let return_string = ret.receive().await;
-
-                        let _ = socket.write_all(return_string.as_bytes()).await;
-
-                        let _ = socket.flush().await;
-
-                        let _ = socket.close();
-
-                        //Purge remaining data and wait for eof
-                        let mut drain = [0u8; 64];
-                        let timeout = Instant::now();
-                        loop {
-                            if timeout.elapsed() > esp_hal::time::Duration::from_secs(3) {
-                                break
-                            }
-                            match socket.read(&mut drain).await {
-                                Ok(0) => break,      // peer closed -> done
-                                Ok(_) => continue,   // ignore any extra bytes
-                                Err(_) => break,     // error -> just exit
-                            }
-                        }
-
-
-                        println!("client disconnected");
-                    }
-                }
-            }
-        }
-
-        Timer::after(Duration::from_millis(5)).await;
-    }
-}
-
 async fn send_css<'a>(socket: & mut TcpSocket<'a>) {
     use embedded_io_async::Write;
 
@@ -387,6 +312,14 @@ async fn send_403<'a>(socket: &mut TcpSocket<'a>) {
     use embedded_io_async::Write;
 
     let _ = socket.write_all(b"HTTP/1.1 403 Forbidden\r\n").await;
+    let _ = socket.write_all(b"Content-Length: 0\r\n").await;
+    let _ = socket.write_all(b"Connection: close\r\n\r\n").await;
+}
+
+async fn send_400<'a>(socket: &mut TcpSocket<'a>) {
+    use embedded_io_async::Write;
+
+    let _ = socket.write_all(b"HTTP/1.1 400 Bad Request\r\n").await;
     let _ = socket.write_all(b"Content-Length: 0\r\n").await;
     let _ = socket.write_all(b"Connection: close\r\n\r\n").await;
 }
@@ -493,7 +426,7 @@ enum ResponseMain {
     },
     Settings {
         reset_reason: u32,
-        core_temperature: Option<f32>,
+        //core_temperature: Option<f32>,
         current_time: Option<OffsetDateTime>,
         brightness: u8,
     },
@@ -528,7 +461,6 @@ async fn webserver_task(
     response: &'static Channel<NoopRawMutex, ResponseMain, 1>,
 ) -> ! {
     use httparse::{Request, EMPTY_HEADER};
-    use embedded_io_async::Write;
 
     let mut rx_buf = [0u8; 3024];
     let mut tx_buf = [0u8; 3024];
@@ -586,7 +518,7 @@ async fn webserver_task(
 
                                 if let ResponseMain::Status { temperature, thermostat, variant, current_time, up_time, current_state, position, max_pos } = response.receive().await {
 
-                                    let temperature = temperature.map(|t| format!("{}", t)).unwrap_or_else(|| format!("Error"));
+                                    let temperature = temperature.map(|t| format!("{:.1}", t)).unwrap_or_else(|| format!("Error"));
                                     let thermostat = format!("{:?}", thermostat);
                                     let variant = format!("{:?}", variant);
                                     let current_time = current_time.map(|t| format!("{:.3} {:02}:{:02}", t.weekday(), t.hour(), t.minute())).unwrap_or_else(|| format!("Error"));
@@ -605,6 +537,7 @@ async fn webserver_task(
                                             }
                                         }
                                         fsm::State::Warning(code) => { format!("{:?}", code) }
+                                        fsm::State::Calibrate(t) => { format!("{:?}", t) }
                                         _ => { format!("") }
                                     };
 
@@ -702,7 +635,7 @@ async fn webserver_task(
 
                                 request.send(RequestMain::SettingsPage).await;
 
-                                if let ResponseMain::Settings { reset_reason, core_temperature, current_time, brightness } = response.receive().await {
+                                if let ResponseMain::Settings { reset_reason, current_time, brightness } = response.receive().await {
 
                                     let reset_code = format!("{}", reset_reason);
 
@@ -726,16 +659,11 @@ async fn webserver_task(
                                         _ => "Unknown reset reason",
                                     };
 
-                                    let cpu_tsense = match core_temperature {
-                                        Some(value) => format!("{:.1}°C", value),
-                                        None => format!("Unknown"),
-                                    };
-
                                     let current_time = current_time.map(|t| format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.year(), t.month() as u32, t.day(), t.hour(), t.minute(), t.second())).unwrap_or_else(|| format!("Error"));
 
                                     let brightness = format!("{}", brightness);
 
-                                    let cards = vec![reset_code.as_str(), reset_reason, cpu_tsense.as_str(), brightness.as_str(), current_time.as_str()];
+                                    let cards = vec![reset_code.as_str(), reset_reason, "NO TEMP", brightness.as_str(), current_time.as_str()];
 
 
                                     let _ = send_template("text/html", SETTINGS_HTML, & mut socket, &cards).await;
@@ -787,9 +715,9 @@ async fn webserver_task(
 
                                     let max = format!("{}", max_position);
                                     let is_locked = format!("{}", if is_locked {"Locked"} else {"Unlocked"});
-                                    let pos = if position == 0xffffffff { format!("Undefined") } else { format!("{}", position) };
+                                    let pos = if storages::is_locked() { format!("Undefined") } else { format!("{}", position) };
 
-                                    let cards = vec![max.as_str(), is_locked.as_str(), pos.as_str()];
+                                    let cards = vec![max.as_str(), is_locked.as_str(), pos.as_str(), max.as_str()];
 
 
                                     let _ = send_template("text/html", CALIBRATE_HTML, & mut socket, &cards).await;
@@ -809,15 +737,23 @@ async fn webserver_task(
                                             request.send(RequestMain::ModeCalibrate).await;
                                         }
                                         (Some("set_max"), Some(max)) => {
-                                            if let fsm::State::Calibrate = state {
-                                                request.send(RequestMain::SetMax(max.parse::<u32>().unwrap())).await;
-                                                send_200(& mut socket, None).await;
+                                            if state.is_calibrate() {
+
+                                                let max = max.parse::<u32>().unwrap();
+
+                                                if max <= motor::ABSOLUTE_MAX_POSITION {
+                                                    request.send(RequestMain::SetMax(max)).await;
+                                                    send_200(& mut socket, None).await;
+                                                } else {
+                                                    send_400(& mut socket).await;
+                                                }
+
                                             } else {
                                                 send_403(& mut socket).await;
                                             }
                                         }
                                         (Some("push"), Some(push)) => {
-                                            if let fsm::State::Calibrate = state {
+                                            if state.is_calibrate() {
                                                 request.send(RequestMain::Push(push.parse::<u32>().unwrap())).await;
                                                 send_200(& mut socket, None).await;
                                             } else {
@@ -826,7 +762,7 @@ async fn webserver_task(
 
                                         }
                                         (Some("pull"), Some(pull)) => {
-                                            if let fsm::State::Calibrate = state {
+                                            if state.is_calibrate() {
                                                 request.send(RequestMain::Pull(pull.parse::<u32>().unwrap())).await;
                                                 send_200(& mut socket, None).await;
                                             } else {
@@ -834,7 +770,7 @@ async fn webserver_task(
                                             }
                                         }
                                         (Some("action"), Some("lock")) => {
-                                            if let fsm::State::Calibrate = state {
+                                            if state.is_calibrate() {
                                                 request.send(RequestMain::Lock).await;
                                                 send_200(& mut socket, None).await;
                                             } else {
@@ -842,7 +778,7 @@ async fn webserver_task(
                                             }
                                         }
                                         (Some("action"), Some("unlock_zero")) => {
-                                            if let fsm::State::Calibrate = state {
+                                            if state.is_calibrate() {
                                                 request.send(RequestMain::UnlockZero).await;
                                                 send_200(& mut socket, None).await;
                                             } else {
@@ -1079,16 +1015,30 @@ async fn led_task(
         }
 
         rgb_led.update(|r, g, b| {
-            let r = (r as u32 * 256) / 255;
-            let g = (g as u32 * 256) / 255;
-            let b = (b as u32 * 256) / 255;
 
-            red_channel.set_duty_hw(256 - r);
-            green_channel.set_duty_hw(256 - g);
-            blue_channel.set_duty_hw(256 - b);
+            red_channel.set_duty_hw(DUTY_MAX - r);
+            green_channel.set_duty_hw(DUTY_MAX - g);
+            blue_channel.set_duty_hw(DUTY_MAX - b);
         });
 
         Timer::after(Duration::from_millis(5)).await;
+
+    }
+
+}
+
+#[embassy_executor::task]
+async fn heart_beat(mut beat_output: esp_hal::gpio::Output<'static>) {
+
+    loop {
+        beat_output.set_low();
+        Timer::after(Duration::from_millis(10)).await;
+        beat_output.set_high();
+        Timer::after(Duration::from_millis(300)).await;
+        beat_output.set_low();
+        Timer::after(Duration::from_millis(10)).await;
+        beat_output.set_high();
+        Timer::after(Duration::from_millis(800)).await;
 
     }
 
@@ -1103,28 +1053,48 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
+    let _uart = Uart::new(peripherals.UART0, esp_hal::uart::Config::default()).unwrap()
+        .with_rx(peripherals.GPIO7)
+        .with_tx(peripherals.GPIO9);
+
+    print!("{}", crate::backtrace::RESET);
+
     /* Pin definitions */
 
-    let RED_PIN = peripherals.GPIO10;
-    let GREEN_PIN = peripherals.GPIO20;
-    let BLUE_PIN = peripherals.GPIO21;
+    let red_pin = peripherals.GPIO36;
+    let green_pin = peripherals.GPIO38;
+    let blue_pin = peripherals.GPIO40;
 
-    let MODE_BUTTON_PIN = peripherals.GPIO8;
+    let mode_button_pin = peripherals.GPIO14;
 
-    let ONE_WIRE_PIN = peripherals.GPIO9;
+    //let ONE_WIRE_PIN = peripherals.GPIO9;
+    let sda_pin = peripherals.GPIO17;
+    let scl_pin = peripherals.GPIO16;
 
-    let COIL_A1_PIN = peripherals.GPIO0;
-    let COIL_A2_PIN = peripherals.GPIO3;
-    let COIL_B1_PIN = peripherals.GPIO1;
-    let COIL_B2_PIN = peripherals.GPIO2;
+    let coil_a1_pin = peripherals.GPIO0;
+    let coil_a2_pin = peripherals.GPIO3;
+    let coil_b1_pin = peripherals.GPIO1;
+    let coil_b2_pin = peripherals.GPIO2;
 
-    /* Setup LED pins */
+    let exception_led_pin = peripherals.GPIO39;
+    let panic_led_pin = peripherals.GPIO37;
+    let beat_led_pin = peripherals.GPIO35;
+
+    /* Setup Diagnostic LED pins */
+
+    let _exception_output = Output::new(exception_led_pin, Level::High, esp_hal::gpio::OutputConfig::default());
+    let _panic_output = Output::new(panic_led_pin, Level::High, esp_hal::gpio::OutputConfig::default());
+    let beat_output = Output::new(beat_led_pin, Level::High, esp_hal::gpio::OutputConfig::default());
+
+    spawner.spawn(heart_beat(beat_output)).unwrap();
+
+    /* Setup RGB LED pins */
 
     print!("LEDs...");
 
-    let red = Output::new(RED_PIN, Level::High, OutputConfig::default());
-    let green = Output::new(GREEN_PIN, Level::High, OutputConfig::default());
-    let blue = Output::new(BLUE_PIN, Level::High, OutputConfig::default());
+    let red = Output::new(red_pin, Level::High, OutputConfig::default());
+    let green = Output::new(green_pin, Level::High, OutputConfig::default());
+    let blue = Output::new(blue_pin, Level::High, OutputConfig::default());
 
     let mut myledc = Ledc::new(peripherals.LEDC);
     myledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
@@ -1134,9 +1104,9 @@ async fn main(spawner: Spawner) {
         {
             let mut t = myledc.timer::<esp_hal::ledc::LowSpeed>(esp_hal::ledc::timer::Number::Timer1);
             t.configure(esp_hal::ledc::timer::config::Config {
-                duty: esp_hal::ledc::timer::config::Duty::Duty8Bit,
+                duty: esp_hal::ledc::timer::config::Duty::Duty12Bit,
                 clock_source: esp_hal::ledc::timer::LSClockSource::APBClk,
-                frequency: esp_hal::time::Rate::from_khz(24),
+                frequency: esp_hal::time::Rate::from_khz(4),
             }).unwrap(); //Safe
             t
         }
@@ -1168,7 +1138,7 @@ async fn main(spawner: Spawner) {
         GREEN_REF = Some(green_channel);
         BLUE_REF = Some(blue_channel);
 
-        RED_REF.as_ref().unwrap().set_duty_hw(256); //Safe
+        RED_REF.as_ref().unwrap().set_duty_hw(DUTY_MAX); //Safe
         GREEN_REF.as_ref().unwrap().set_duty_hw(0); //Safe
         GREEN_REF.as_ref().unwrap().set_duty_hw(0); //Safe
     }
@@ -1179,7 +1149,9 @@ async fn main(spawner: Spawner) {
     static BRIGHT_CHNL: StaticCell<Channel<NoopRawMutex, u8, 1>> = StaticCell::new();
     let brightness_channel: & 'static mut Channel<NoopRawMutex, u8, 1>  = BRIGHT_CHNL.init(Channel::new());
 
+
     spawner.spawn(led_task(led_channel, brightness_channel, RGBState::OneFlash(Color { r: 0, g: 255, b:255 }, 100, 100))).unwrap(); //Unrecoverable
+
 
     println!("Done.");
 
@@ -1187,7 +1159,7 @@ async fn main(spawner: Spawner) {
 
     print!("CPU tsense...");
 
-    let cpu_tsense = esp_hal::tsens::TemperatureSensor::new(peripherals.TSENS, esp_hal::tsens::Config::default());
+    //let cpu_tsense = esp_hal::tsens::TemperatureSensor::new(peripherals.TSENS, esp_hal::tsens::Config::default());
 
     println!("Done.");
 
@@ -1195,7 +1167,7 @@ async fn main(spawner: Spawner) {
 
     print!("Button...");
 
-    let button_pin = esp_hal::gpio::Input::new(MODE_BUTTON_PIN, InputConfig::default().with_pull(Pull::Up));
+    let button_pin = esp_hal::gpio::Input::new(mode_button_pin, InputConfig::default().with_pull(Pull::Up));
 
     let mut mode_button = crate::mode_button::Mode::new(button_pin);
 
@@ -1203,9 +1175,15 @@ async fn main(spawner: Spawner) {
 
     /* Set ip dht22 */
 
+    let sensor_i2c = esp_hal::i2c::master::I2c::new(peripherals.I2C0, esp_hal::i2c::master::Config::default()).unwrap()
+        .with_scl(scl_pin)
+        .with_sda(sda_pin);
+
     print!("Temperature sensor...");
 
-    let mut thermo = Thermometer::new(ONE_WIRE_PIN);
+    let mut aht = aht20_driver::AHT20::new(sensor_i2c, aht20_driver::SENSOR_ADDRESS);
+
+    let mut thermo = Thermometer::new(aht.init(& mut Delay).unwrap());
 
     let _ = thermo.get_temperature();
 
@@ -1225,7 +1203,7 @@ async fn main(spawner: Spawner) {
 
     if storages::is_locked() {
 
-        fsm.force_change(fsm::State::Calibrate);
+        fsm.force_change(fsm::State::Calibrate(CalibrateType::MotorLocked));
 
 
     }
@@ -1235,22 +1213,13 @@ async fn main(spawner: Spawner) {
 
     print!("Init motor...");
 
-    let mut motor = Motor::new(COIL_A1_PIN, COIL_A2_PIN, COIL_B1_PIN, COIL_B2_PIN);
+    let mut motor = Motor::new(coil_a1_pin, coil_a2_pin, coil_b1_pin, coil_b2_pin);
 
     println!("Done.");
 
     /* Set up the wifi and web server */
 
     print!("Wifi...");
-
-
-
-    static MSG_CHNL: StaticCell<Channel<NoopRawMutex, Message, 1>> = StaticCell::new();
-    let message_channel: & 'static mut Channel<NoopRawMutex, Message, 1>  = MSG_CHNL.init(Channel::new());
-
-    static RET_CHNL: StaticCell<Channel<NoopRawMutex, String, 1>> = StaticCell::new();
-    let return_channel: & 'static mut Channel<NoopRawMutex, String, 1>  = RET_CHNL.init(Channel::new());
-
 
     static RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
     let resources: & 'static mut StackResources<4>  = RESOURCES.init(StackResources::new());
@@ -1351,9 +1320,9 @@ async fn main(spawner: Spawner) {
 
                     loop {
                         {
-                            let mut guard = time_mutex.lock().await;
+                            let guard = time_mutex.lock().await;
 
-                            if guard.date_time().is_some() || time_api_start.elapsed().as_secs() > 15 {
+                            if guard.date_time().is_some() || time_api_start.elapsed().as_secs() > 3 {
                                 break;
                             }
                         }
@@ -1377,12 +1346,12 @@ async fn main(spawner: Spawner) {
 
     }
 
-    if !wifi_controller.is_connected().unwrap_or_else(|x| false) {
+    if !wifi_controller.is_connected().unwrap_or_else(|_| false) {
         //If wifi is not working, warning
         fsm.force_change(State::Warning(WarningType::WiFiError))
     } else {
         //If the wifi is working but there is no time, warning
-        let mut guard = time_mutex.lock().await;
+        let guard = time_mutex.lock().await;
 
         if guard.date_time().is_none() {
 
@@ -1446,12 +1415,12 @@ async fn main(spawner: Spawner) {
                         fsm.request_change(fsm::State::SafeMode);
                     }
                     RequestMain::ModeCalibrate => {
-                        fsm.request_change(fsm::State::Calibrate);
+                        fsm.request_change(fsm::State::Calibrate(CalibrateType::UserRequested));
                     }
                     RequestMain::SettingsPage => {
                         let settings = ResponseMain::Settings {
                             reset_reason: esp_hal::rom::rtc_get_reset_reason(0),
-                            core_temperature: cpu_tsense.as_ref().ok().map(|x| x.get_temperature().to_celsius()),
+                            //core_temperature: cpu_tsense.as_ref().ok().map(|x| x.get_temperature().to_celsius()),
                             current_time: {
 
                                 let guard = time_mutex.lock().await;
@@ -1495,14 +1464,7 @@ async fn main(spawner: Spawner) {
                     }
                     RequestMain::Exception => {
                         unsafe {
-                            #[cfg(target_arch = "riscv32")]
-                            core::arch::asm!("unimp", options(noreturn));
-
-                            // Xtensa (ESP32-S2/S3). `ill` is an illegal-instruction trap.
-                            // If your toolchain doesn’t accept `ill`, use `.byte 0` repeatedly.
-                            core::arch::asm!("ill", options(noreturn))
-                            // Fallback for older xtensa assemblers:
-                            // core::arch::asm!(".byte 0, 0, 0", options(noreturn));
+                            core::arch::asm!(".word 0", options(nomem, nostack, noreturn));
                         }
                     }
                     RequestMain::SetMax(pos) => {
@@ -1586,382 +1548,6 @@ async fn main(spawner: Spawner) {
             }
         }
 
-
-        match message_channel.try_receive() {
-            Ok(message) => {
-                println!("Loop message");
-                let return_string = match message.function {
-                    Function::CalibratePush(revolutions) => {
-                        if fsm.state().is_calibrate() {
-                            motor.calibrate_push(revolutions);
-                            format!("Pushed {} revolutions", revolutions)
-                        } else {
-                            format!("Device must be in calibrate mode for calibrate push to work")
-                        }
-                    },
-                    Function::CalibratePull(revolutions) => {
-                        if fsm.state().is_calibrate() {
-                            motor.calibrate_pull(revolutions);
-                            format!("Pulled {} revolutions", revolutions)
-                        } else {
-                            format!("Device must be in calibrate mode for calibrate pull to work")
-                        }
-                    },
-                    Function::UnlockAndZero => {
-                        if fsm.state().is_calibrate() {
-                            if storages::is_locked() {
-                                storages::unlock_and_set_pos(0);
-                                format!("Lock unlocked and zeroed")
-                            } else {
-                                format!("Already unlocked")
-                            }
-                        } else {
-                            format!("Device must be in calibrate mode for unlock to work")
-                        }
-                    },
-                    Function::Lock => {
-                        if fsm.state().is_calibrate() {
-                            storages::lock();
-                            format!("Locked motor")
-                        } else {
-                            format!("Device must be in calibrate mode for lock to work")
-                        }
-                    }
-                    Function::GetLock => {
-                        format!("Lock is {}", if storages::is_locked() { "locked" } else { "unlocked" })
-                    },
-                    Function::GetPosition => {
-
-                        let position = storages::get_position();
-
-                        if position > crate::motor::ABSOLUTE_MAX_POSITION {
-                            format!("Cannot get position - device is locked or position is corrupt")
-                        } else {
-                            format!("Position is at: {}", position)
-                        }
-
-                    },
-                    Function::GetMax => {
-                        format!("Max position is at: {}", motor.max_position())
-                    },
-                    Function::SetMax(value) => {
-                        if fsm.state().is_calibrate() {
-                            motor.set_max_position(value);
-                            format!("Set max position to {}", value)
-                        } else {
-                            format!("Device must be in calibrate mode for set max to work")
-                        }
-                    },
-                    Function::GetThermostat => {
-                        format!("Thermostat value is {}°C", thermo.thermostat())
-                    },
-                    Function::SetThermostat(temperature) => {
-                        thermo.set_thermostat(temperature);
-                        format!("Thermostat set to {}°C", thermo.thermostat())
-                    },
-                    Function::ReadTemperature => {
-                        match thermo.get_temperature() {
-                            Ok(temperature) => {
-                                format!("Temperature is {}°C", temperature)
-                            }
-                            Err(e) => {
-                                format!("Temperature is unknown, sensor error - {:?}", e)
-                            }
-                        }
-
-
-                    },
-                    Function::GetMacAddress => {
-                        //format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                        //        mac_address[0], mac_address[1], mac_address[2], mac_address[3], mac_address[4], mac_address[5])
-                        format!("no")
-                    },
-                    Function::SoftReset => {
-                        esp_hal::rom::software_reset();
-                    },
-                    Function::SyncTime(epoch) => {
-                        let mut guard = time_mutex.lock().await;
-
-                        guard.update_epoch(epoch);
-
-                        format!("Time updated")
-                    },
-                    Function::GetResetReason => {
-                        format!("Reset reason: {}", esp_hal::rom::rtc_get_reset_reason(0))
-                    },
-                    Function::GetTime => {
-
-                        let guard = time_mutex.lock().await;
-
-                        if let Some(date_time) = guard.date_time() {
-                            format!("Time is {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-                                   date_time.year(),
-                                   date_time.month() as u32,
-                                   date_time.day(),
-                                   date_time.hour(),
-                                   date_time.minute(),
-                                   date_time.second(),
-                            )
-                        } else {
-                            format!("Could not get time - rtc not synced")
-                        }
-                    },
-                    Function::Descale => {
-                        fsm.request_change(fsm::State::Descale);
-                        format!("Requesting descale - NOTE: this might not work if the device is in safe, calibrate or warning mode")
-                    },
-                    Function::Rainbow => {
-                        fsm.request_change(fsm::State::Rainbow);
-                        format!("Requesting Rainbow")
-                    }
-                    Function::Calibrate => {
-                        fsm.request_change(fsm::State::Calibrate);
-                        format!("Requesting descale - NOTE: this might not work if the device is in safe, calibrate or warning mode")
-                    },
-                    Function::SafeMode => {
-                        fsm.request_change(fsm::State::SafeMode);
-                        format!("Requesting descale - NOTE: this might not work if the device is in safe, calibrate or warning mode")
-                    },
-                    Function::Cancel => {
-                        fsm.request_change(fsm::State::Cancel);
-                        format!("Cancelling mode (does nothing unless in warning, descale or boost mode)")
-                    },
-                    Function::ShortBoost => {
-                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(motor.short_boost() as u64)));
-                        format!("Starting short boost")
-                    },
-                    Function::LongBoost => {
-                        fsm.request_change(fsm::State::Boost(Instant::now(), esp_hal::time::Duration::from_secs(motor.long_boost() as u64)));
-                        format!("Starting long boost")
-                    },
-                    Function::CurrentState => {
-                        format!("State is: {:?}", fsm.state())
-                    },
-                    Function::GetBoostDuration => {
-                        if let fsm::State::Boost(instant, duration) = fsm.state() {
-
-                            let seconds_left = (*duration - instant.elapsed()).as_secs();
-
-                            format!("Boost has {} minutes and {} seconds left", seconds_left / 60, seconds_left % 60)
-                        } else {
-                            format!("Radiator is not in boost mode")
-                        }
-                    }
-                    Function::SetShortDuration(duration) => {
-                        motor.set_short_boost(duration);
-                        format!("Set short boost duration")
-                    }
-                    Function::SetLongDuration(duration) => {
-                        motor.set_long_boost(duration);
-                        format!("Set long boost duration")
-                    }
-                    Function::SetVariant(variant) => {
-                        if let Some(v) = Variant::from_str(variant.as_str()) {
-                            fsm.set_variant(v);
-                            format!("Variant changed to: {}", variant)
-                        } else {
-                            format!("Invalid variant (must be summer or winter)")
-                        }
-                    }
-                    Function::GetVariant => {
-                        format!("Using {:?} schedule", fsm.variant())
-                    }
-                    Function::GetSummer => {
-                        if fsm.summer().len() == 0 {
-                            format!("Summer schedule is empty")
-                        } else {
-                            let mut str = String::new();
-                            for slot in fsm.summer() {
-                                write!(str, "\n{}", slot).unwrap(); //Safe
-                            }
-                            str
-                        }
-                    }
-                    Function::GetWinter => {
-                        if fsm.winter().len() == 0 {
-                            format!("Winter schedule is empty")
-                        } else {
-                            let mut str = String::new();
-                            for slot in fsm.winter() {
-                                write!(str, "\n{}", slot).unwrap(); //Safe
-                            }
-                            str
-                        }
-                    }
-                    Function::GetBrightness => {
-                        if fsm.brightness().len() == 0 {
-                            format!("Winter schedule is empty")
-                        } else {
-                            let mut str = String::new();
-                            for slot in fsm.brightness() {
-                                write!(str, "\n{}", slot).unwrap(); //Safe
-                            }
-                            str
-                        }
-                    }
-                    Function::AddSummerSlot(slot) => {
-
-                        if let Some(s) = ScheduleEntry::from_str(slot.as_str()) {
-
-                            fsm.add_summer(s);
-                            format!("Added summer slot")
-                        } else {
-                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
-                        }
-
-                    }
-                    Function::ClearSummer(confirm) => {
-
-                        if confirm == "CLEAR" {
-                            fsm.clear_summer();
-                            format!("Summer schedule cleared")
-                        } else {
-                            format!("Please send 'CLEAR' confirmation to erase schedule")
-                        }
-                    }
-                    Function::AddWinterSlot(slot) => {
-
-                        if let Some(s) = ScheduleEntry::from_str(slot.as_str()) {
-
-                            fsm.add_winter(s);
-                            format!("Added winter slot")
-                        } else {
-                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
-                        }
-
-                    }
-                    Function::ClearWinter(confirm) => {
-
-                        if confirm == "CLEAR" {
-                            fsm.clear_winter();
-                            format!("Winter schedule cleared")
-                        } else {
-                            format!("Please send 'CLEAR' confirmation to erase schedule")
-                        }
-                    }
-                    Function::AddBrightnessSlot(slot) => {
-
-                        if let Some(s) = BrightnessEntry::from_str(slot.as_str()) {
-
-                            fsm.add_brightness(s);
-                            format!("Added brightness slot")
-                        } else {
-                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
-                        }
-
-                    }
-                    Function::ClearBrightness(confirm) => {
-
-                        if confirm == "CLEAR" {
-                            fsm.clear_brightness();
-                            format!("Brightness schedule cleared")
-                        } else {
-                            format!("Please send 'CLEAR' confirmation to erase schedule")
-                        }
-
-
-                    }
-                    Function::RemoveSummerSlot(slot) => {
-                        if let Some(s) = ScheduleEntry::from_str(slot.as_str()) {
-
-                            if fsm.remove_summer(s).is_some() {
-                                format!("Removed summer slot")
-                            } else {
-                                format!("No such slot in summer schedule")
-                            }
-
-                        } else {
-                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
-                        }
-                    }
-                    Function::RemoveWinterSlot(slot) => {
-                        if let Some(s) = ScheduleEntry::from_str(slot.as_str()) {
-
-                            if fsm.remove_winter(s).is_some() {
-                                format!("Removed winter slot")
-                            } else {
-                                format!("No such slot in winter schedule")
-                            }
-
-                        } else {
-                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
-                        }
-                    }
-                    Function::RemoveBrightnessSlot(slot) => {
-                        if let Some(s) = BrightnessEntry::from_str(slot.as_str()) {
-
-                            if fsm.remove_brightness(s).is_some() {
-                                format!("Removed brightness slot")
-                            } else {
-                                format!("No such slot in brightness schedule")
-                            }
-
-                        } else {
-                            format!("Invalid schedule - must be weekday,start,finish,state format (WWW,HH:MM,HH:MM,state)")
-                        }
-                    }
-                    Function::StartPanic(confirm) => {
-                        if confirm == "PANIC" {
-                            panic!("User requested panic (via WiFi commands)");
-                        } else {
-                            format!("When requesting a panic the 'PANIC' string must be sent to confirm")
-                        }
-                    }
-                    Function::StartException(confirm) => {
-                        if confirm == "EXCEPTION" {
-                            unsafe {
-                                #[cfg(target_arch = "riscv32")]
-                                core::arch::asm!("unimp", options(noreturn));
-
-                                // Xtensa (ESP32-S2/S3). `ill` is an illegal-instruction trap.
-                                // If your toolchain doesn’t accept `ill`, use `.byte 0` repeatedly.
-                                core::arch::asm!("ill", options(noreturn))
-                                // Fallback for older xtensa assemblers:
-                                // core::arch::asm!(".byte 0, 0, 0", options(noreturn));
-                            }
-                        } else {
-                            format!("When requesting a panic the 'EXCEPTION' string must be sent to confirm")
-                        }
-                    }
-                    Function::GetLEDBrightness => {
-                        format!("LED brightness is {}%", fsm.get_brightness())
-                    }
-                    Function::GetUpTime => {
-                        let up_time = start_time.elapsed().as_secs();
-                        let dur = time::Duration::seconds(up_time as i64);
-
-                        let days = dur.whole_seconds() / 86400;
-                        let hours = (dur.whole_seconds() % 86_400) / 3_600;
-                        let minutes = (dur.whole_seconds() % 3_600) / 60;
-                        let seconds = dur.whole_seconds() % 60;
-
-                        if days == 0 {
-                            if hours == 0 {
-                                if minutes == 0 {
-                                    format!("Uptime is {} seconds.", seconds)
-                                } else {
-                                    format!("Uptime is {} minutes and {} seconds.", minutes, seconds)
-                                }
-                            } else {
-                                format!("Uptime is {} hours, {} minutes and {} seconds.", hours, minutes, seconds)
-                            }
-                        } else {
-                            format!("Uptime is {} days, {} hours, {} minutes and {} seconds.", days, hours, minutes, seconds)
-                        }
-
-                    }
-
-
-                };
-
-                return_channel.send(return_string).await;
-            },
-            Err(_) => {
-
-            }
-        }
-
-
         mode_button.update();
 
         if let Some(action) = mode_button.released_action() {
@@ -1977,7 +1563,7 @@ async fn main(spawner: Spawner) {
                     fsm.request_change(fsm::State::Cancel);
                 }
                 mode_button::Action::Calibrate => {
-                    fsm.request_change(fsm::State::Calibrate);
+                    fsm.request_change(fsm::State::Calibrate(CalibrateType::UserRequested));
                 }
                 mode_button::Action::Safe => {
                     fsm.request_change(fsm::State::SafeMode);
@@ -2060,21 +1646,39 @@ async fn main(spawner: Spawner) {
                             fsm.allow_request();
 
                             if actual < (thermostat - 0.25) {
-                                if !motor.open_valve() {
-                                    fsm.force_change(fsm::State::Calibrate);
+                                match motor.open_valve() {
+                                    Err(motor::MotorError::MotorLocked) => {
+                                        fsm.force_change(fsm::State::Calibrate(CalibrateType::MotorLocked));
+                                    },
+                                    Err(motor::MotorError::MotorMaxNotSet) => {
+                                        fsm.force_change(fsm::State::Calibrate(CalibrateType::MissingMaxPos));
+                                    }
+                                    Err(motor::MotorError::AbsoluteMaxExceeded) => {
+                                        fsm.force_change(fsm::State::Calibrate(CalibrateType::AbsoluteMaxExceeded));
+                                    }
+                                    Ok(()) => {}
                                 }
 
                             }
 
                             if actual > (thermostat + 0.25) {
-                                if !motor.close_valve() {
-                                    fsm.force_change(fsm::State::Calibrate);
+                                match motor.close_valve() {
+                                    Err(motor::MotorError::MotorLocked) => {
+                                        fsm.force_change(fsm::State::Calibrate(CalibrateType::MotorLocked));
+                                    },
+                                    Err(motor::MotorError::MotorMaxNotSet) => {
+                                        fsm.force_change(fsm::State::Calibrate(CalibrateType::MissingMaxPos));
+                                    }
+                                    Err(motor::MotorError::AbsoluteMaxExceeded) => {
+                                        fsm.force_change(fsm::State::Calibrate(CalibrateType::AbsoluteMaxExceeded));
+                                    }
+                                    Ok(()) => {}
                                 }
                             }
 
 
                         }
-                        Err(e) => {
+                        Err(_) => {
                             fsm.force_change(fsm::State::Warning(WarningType::TemperatureSensorError))
                         }
                     }
@@ -2090,9 +1694,17 @@ async fn main(spawner: Spawner) {
                     }
 
                     if state_just_changed {
-
-                        if !motor.close_valve() {
-                            fsm.force_change(State::Calibrate);
+                        match motor.close_valve() {
+                            Err(motor::MotorError::MotorLocked) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::MotorLocked));
+                            },
+                            Err(motor::MotorError::MotorMaxNotSet) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::MissingMaxPos));
+                            }
+                            Err(motor::MotorError::AbsoluteMaxExceeded) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::AbsoluteMaxExceeded));
+                            }
+                            Ok(()) => {}
                         }
 
 
@@ -2124,9 +1736,19 @@ async fn main(spawner: Spawner) {
 
                     if state_just_changed {
 
-                        if !motor.open_valve() {
-                            fsm.force_change(fsm::State::Calibrate);
+                        match motor.open_valve() {
+                            Err(motor::MotorError::MotorLocked) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::MotorLocked));
+                            },
+                            Err(motor::MotorError::MotorMaxNotSet) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::MissingMaxPos));
+                            }
+                            Err(motor::MotorError::AbsoluteMaxExceeded) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::AbsoluteMaxExceeded));
+                            }
+                            Ok(()) => {}
                         }
+
 
 
                         mode_button.clear_actions();
@@ -2137,7 +1759,7 @@ async fn main(spawner: Spawner) {
 
                     fsm.allow_request();
                 }
-                crate::fsm::State::Calibrate => {
+                crate::fsm::State::Calibrate(_) => {
 
                     if state_just_changed || mode_button.just_released() {
                         led_channel.send(RGBState::Fade(Color { r: 255, g: 150, b: 0 }, 400)).await;
@@ -2167,8 +1789,17 @@ async fn main(spawner: Spawner) {
 
                     if state_just_changed {
 
-                        if !motor.open_valve() {
-                            fsm.force_change(fsm::State::Calibrate);
+                        match motor.open_valve() {
+                            Err(motor::MotorError::MotorLocked) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::MotorLocked));
+                            },
+                            Err(motor::MotorError::MotorMaxNotSet) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::MissingMaxPos));
+                            }
+                            Err(motor::MotorError::AbsoluteMaxExceeded) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::AbsoluteMaxExceeded));
+                            }
+                            Ok(()) => {}
                         }
 
 
@@ -2192,14 +1823,23 @@ async fn main(spawner: Spawner) {
                     if state_just_changed {
                         //Whatever position the valve is in, open and close it
 
-                        if !motor.close_valve() {
+                        match motor.close_valve() {
+                            Err(motor::MotorError::MotorLocked) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::MotorLocked));
+                            },
+                            Err(motor::MotorError::MotorMaxNotSet) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::MissingMaxPos));
+                            }
+                            Err(motor::MotorError::AbsoluteMaxExceeded) => {
+                                fsm.force_change(fsm::State::Calibrate(CalibrateType::AbsoluteMaxExceeded));
+                            }
+                            Ok(()) => {
 
-                            fsm.force_change(fsm::State::Calibrate);
-                        } else {
-
-                            motor.open_valve();
-                            motor.close_valve();
+                                motor.open_valve();
+                                motor.close_valve();
+                            }
                         }
+
 
 
 

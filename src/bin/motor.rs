@@ -9,6 +9,12 @@ const SPEED: u32 = 625;
 const STEPS_PER_REV: u32 = 48;
 pub(crate) const ABSOLUTE_MAX_POSITION: u32 = 50;
 
+pub(crate) enum MotorError {
+    MotorLocked,
+    MotorMaxNotSet,
+    AbsoluteMaxExceeded,
+}
+
 pub(crate) struct Motor<'a> {
     stepper: Stepper4<Output<'a>, Output<'a>, Output<'a>, Output<'a>, Delay>,
     steps_per_rev: u32,
@@ -56,19 +62,23 @@ impl<'a> Motor<'a> {
         let _ = self.stepper.deenergise();
     }
 
-    fn move_valve(& mut self, to_position: u32) -> bool {
+    fn move_valve(& mut self, to_position: u32) -> Result<(), MotorError> {
 
         if storages::is_locked() {
-            return false;
+            return Err(MotorError::MotorLocked);
         }
 
         if self.position == to_position {
-            return true;
+            return Ok(());
         }
 
         //Do not move past absolute maximum to protect enclosure
         if to_position > ABSOLUTE_MAX_POSITION {
-            return true;
+            return Err(MotorError::AbsoluteMaxExceeded);
+        }
+
+        if self.max_position == 0 {
+            return Err(MotorError::MotorMaxNotSet);
         }
 
         let revs = to_position as i32 - self.position as i32;
@@ -85,14 +95,14 @@ impl<'a> Motor<'a> {
 
         self.position = to_position;
 
-        true
+        Ok(())
     }
 
-    pub(crate) fn open_valve(& mut self) -> bool {
+    pub(crate) fn open_valve(& mut self) -> Result<(), MotorError> {
         self.move_valve(0)
     }
 
-    pub(crate) fn close_valve(& mut self) -> bool {
+    pub(crate) fn close_valve(& mut self) -> Result<(), MotorError> {
         self.move_valve(self.max_position)
     }
 

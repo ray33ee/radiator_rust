@@ -46,7 +46,7 @@ fn linker_be_nice() {
     }
 
     println!(
-        "cargo:rustc-link-arg=--error-handling-script={}",
+        "cargo:rustc-link-arg=-Wl,--error-handling-script={}",
         std::env::current_exe().unwrap().display()
     );
 }

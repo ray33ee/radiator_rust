@@ -5,7 +5,6 @@ use time::{OffsetDateTime, Weekday};
 use esp_hal::time::{Instant, Duration};
 use serde::{Serialize, Deserialize};
 use crate::{fsm, storages};
-use crate::fsm::Variant::{Summer, Winter};
 use crate::storages::SCHEDULE_ADDRESS;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -13,6 +12,14 @@ pub(crate) enum WarningType {
     WiFiError,
     WorldTimeError,
     TemperatureSensorError,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum CalibrateType {
+    UserRequested,
+    MotorLocked,
+    MissingMaxPos,
+    AbsoluteMaxExceeded,
 }
 
 impl WarningType {
@@ -32,13 +39,41 @@ pub(crate) enum State {
     Regulate,
     Off,
     Boost(Instant, Duration),
-    Calibrate,
+    Calibrate(CalibrateType),
     SafeMode,
     Descale,
     Rainbow,
     Warning(WarningType),
     Cancel,
 }
+
+impl State {
+
+    pub(crate) fn is_calibrate(&self) -> bool {
+        if let State::Calibrate(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn is_safe_mode(&self) -> bool {
+        *self == State::SafeMode
+    }
+
+    pub(crate) fn is_warning(&self) -> bool {
+        if let State::Warning(_) = *self {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn is_cancel(&self) -> bool {
+        *self == State::Cancel
+    }
+}
+
 
 impl Display for State {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -47,37 +82,13 @@ impl Display for State {
             State::Regulate => { write!(f, "Regulate") }
             State::Off => { write!(f, "Off") }
             State::Boost(_, _) => { write!(f, "Boost") }
-            State::Calibrate => { write!(f, "Calibrate") }
+            State::Calibrate(_) => { write!(f, "Calibrate") }
             State::SafeMode => { write!(f, "SafeMode") }
             State::Descale => { write!(f, "Descale") }
             State::Rainbow => { write!(f, "Rainbow") }
             State::Warning(_) => { write!(f, "Warning") }
             State::Cancel => { write!(f, "Cancel") }
         }
-    }
-}
-
-fn parse_day(s: &str) -> Option<Weekday> {
-    match s {
-        "MON" | "mon" => Some(Weekday::Monday),
-        "TUE" | "tue" => Some(Weekday::Tuesday),
-        "WED" | "wed" => Some(Weekday::Wednesday),
-        "THU" | "thu" => Some(Weekday::Thursday),
-        "FRI" | "fri" => Some(Weekday::Friday),
-        "SAT" | "sat" => Some(Weekday::Saturday),
-        "SUN" | "sun" => Some(Weekday::Sunday),
-        _ => None,
-    }
-}
-
-fn parse_time(s: &str) -> Option<u16> {
-    let mut parts = s.split(':');
-    let hour = parts.next()?.parse::<u8>().ok()?;
-    let minute = parts.next()?.parse::<u8>().ok()?;
-    if hour <= 24 && minute < 60 {
-        Some(hour as u16 * 60 + minute as u16)
-    } else {
-        None
     }
 }
 
@@ -131,30 +142,6 @@ impl ScheduleEntry {
         false
     }
 
-
-    fn parse_mode(s: &str) -> Option<crate::fsm::ScheduleState> {
-        match s {
-            "OFF" | "off" | "Off" => Some(crate::fsm::ScheduleState::Off),
-            "REGULATE" | "regulate" | "Regulate" => Some(crate::fsm::ScheduleState::Regulate),
-            "DESCALE" | "descale" | "Descale" => Some(crate::fsm::ScheduleState::Descale),
-            _ => None,
-        }
-    }
-
-    fn parse_schedule_entry(line: &str) -> Option<ScheduleEntry> {
-        let mut parts = line.split(',');
-
-        let day = parse_day(parts.next()?.trim())?;
-        let start = parse_time(parts.next()?.trim())?;
-        let end = parse_time(parts.next()?.trim())?;
-        let mode = Self::parse_mode(parts.next()?.trim())?;
-
-        Some(ScheduleEntry { day, start, end, mode })
-    }
-
-    pub(crate) fn from_str(s: &str) -> Option<ScheduleEntry> {
-        Self::parse_schedule_entry(s)
-    }
 }
 
 impl Display for ScheduleEntry {
@@ -208,22 +195,6 @@ impl BrightnessEntry {
         false
     }
 
-
-    fn parse_brightness_entry(line: &str) -> Option<BrightnessEntry> {
-        let mut parts = line.split(',');
-
-        let day = parse_day(parts.next()?.trim())?;
-        let start = parse_time(parts.next()?.trim())?;
-        let end = parse_time(parts.next()?.trim())?;
-        let level = parts.next()?.trim().parse::<u8>().ok()?;
-
-        Some(BrightnessEntry { day, start, end, level })
-    }
-
-
-    pub(crate) fn from_str(s: &str) -> Option<BrightnessEntry> {
-        Self::parse_brightness_entry(s)
-    }
 }
 
 
@@ -258,44 +229,6 @@ pub(super) enum Variant {
     Winter,
 }
 
-impl Variant {
-    pub(crate) fn from_str(s: &str) -> Option<Variant> {
-        match s {
-            "Summer" | "summer" => {
-                Some(Summer)
-            }
-            "Winter" | "winter" => {
-                Some(Winter)
-            }
-            _ => None,
-        }
-    }
-}
-
-
-impl State {
-
-    pub(crate) fn is_calibrate(&self) -> bool {
-        *self == State::Calibrate
-    }
-
-    pub(crate) fn is_safe_mode(&self) -> bool {
-        *self == State::SafeMode
-    }
-
-    pub(crate) fn is_warning(&self) -> bool {
-        if let State::Warning(_) = *self {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(crate) fn is_cancel(&self) -> bool {
-        *self == State::Cancel
-    }
-}
-
 pub(crate) struct FSM {
     state: State,
     just_changed: bool,
@@ -316,7 +249,7 @@ impl FSM {
         let (variant, summer, winter, brightness) = match storages::load_from_page(SCHEDULE_ADDRESS) {
             Some((variant, summer, winter, brightness)) => (variant, summer, winter, brightness),
             None => {
-                (Winter, Vec::new(),Vec::new(),Vec::new(),)
+                (Variant::Winter, Vec::new(),Vec::new(),Vec::new(),)
             }
         };
 
@@ -464,63 +397,6 @@ impl FSM {
     pub(crate) fn set_variant(&mut self, variant: Variant) {
         self.variant = variant;
         self.save();
-    }
-
-    pub(crate) fn add_summer(&mut self, slot: ScheduleEntry) {
-        self.summer.push(slot);
-        self.save();
-    }
-
-    pub(crate) fn clear_summer(&mut self) {
-        self.summer.clear();
-        self.save();
-    }
-
-    pub(crate) fn add_winter(&mut self, slot: ScheduleEntry) {
-        self.winter.push(slot);
-        self.save();
-    }
-
-    pub(crate) fn clear_winter(&mut self) {
-        self.winter.clear();
-        self.save();
-    }
-
-    pub(crate) fn add_brightness(&mut self, slot: BrightnessEntry) {
-        self.brightness.push(slot);
-        self.save();
-    }
-
-    pub(crate) fn clear_brightness(&mut self) {
-        self.brightness.clear();
-        self.save();
-    }
-
-    pub(crate) fn remove_summer(&mut self, rem: ScheduleEntry) -> Option<()> {
-        if let Some(ind) = self.summer.iter().position(|x| *x == rem) {
-            self.summer.remove(ind);
-            Some(())
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn remove_winter(&mut self, rem: ScheduleEntry) -> Option<()> {
-        if let Some(ind) = self.winter.iter().position(|x| *x == rem) {
-            self.winter.remove(ind);
-            Some(())
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn remove_brightness(&mut self, rem: BrightnessEntry) -> Option<()> {
-        if let Some(ind) = self.brightness.iter().position(|x| *x == rem) {
-            self.brightness.remove(ind);
-            Some(())
-        } else {
-            None
-        }
     }
 
     pub(crate) fn summer(&self) -> &[ScheduleEntry] {

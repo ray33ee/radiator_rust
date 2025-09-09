@@ -60,7 +60,7 @@ impl Unit {
         Self::new(0, 0, 0, 0, 0, 0, duration)
     }
 
-    fn interpolate(&self, x: u32) -> Color {
+    fn interpolate(&self, x: u32) -> (u32, u32, u32) {
         let red_gap = self.to.r as i32 - self.from.r as i32;
         let green_gap = self.to.g as i32 - self.from.g as i32;
         let blue_gap = self.to.b as i32 - self.from.b as i32;
@@ -69,11 +69,7 @@ impl Unit {
         let green = self.from.g as i32 + (green_gap * x as i32) / self.duration as i32;
         let blue = self.from.b as i32 + (blue_gap * x as i32) / self.duration as i32;
 
-        Color {
-            r: red as u8,
-            g: green as u8,
-            b: blue as u8,
-        }
+        (red as u32, green as u32, blue as u32)
     }
 }
 
@@ -148,7 +144,7 @@ impl RGBLED {
     }
 
 
-    fn interpolate(&self, x: u64) -> Color {
+    fn interpolate(&self, x: u64) -> (u32, u32, u32) {
 
         let x = (x % self.cycle_duration) as u32;
 
@@ -167,16 +163,18 @@ impl RGBLED {
 
     }
 
-    pub(crate) fn update<F: FnOnce(u8, u8, u8) -> ()>(&self, change_color: F) {
+    pub(crate) fn update<F: FnOnce(u32, u32, u32) -> ()>(&self, change_color: F) {
         let millis = self.start_time.elapsed().as_millis();
 
-        let color = self.interpolate(millis);
+        let (red, green, blue) = self.interpolate(millis);
 
-        let r = color.r as u32 * self.brightness as u32 / 100;
-        let g = color.g as u32 * self.brightness as u32 / 100;
-        let b = color.b as u32 * self.brightness as u32 / 100;
+        const SCALAR: u32 = crate::DUTY_MAX / 256;
 
-        change_color(r as u8, g as u8, b as u8);
+        let r = (red * self.brightness as u32 * SCALAR) / 100;
+        let g = (green * self.brightness as u32 * SCALAR) / 100;
+        let b = (blue * self.brightness as u32 * SCALAR) / 100;
+
+        change_color(r, g, b);
 
     }
 }

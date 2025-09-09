@@ -16,25 +16,37 @@ pub(crate) const SCHEDULE_ADDRESS: u32 = 995;
 pub(crate) const MOTOR_ADDRESS: u32 = 994;
 pub(crate) const THERMO_ADDRESS: u32 = 993;
 pub(crate) const WIFI_ADDRESS: u32 = 992;
-const POSITION_PAGE: u32 = 1022;
+const POSITION_PAGE: u32 = 1022; //
 
 
 const POSITION_LOCATION: u32 = POSITION_PAGE * PAGE_SIZE;
 
 pub(crate) fn lock() {
     //Erase the 'Positon/Lock' sector of flash
-    unsafe {
-        let _ = esp_rom_spiflash_erase_sector(POSITION_PAGE);
-    }
+    critical_section::with(|_| {
+
+        unsafe {
+            let _ = esp_rom_spiflash_erase_sector(POSITION_PAGE);
+        }
+    });
 }
 
 pub(crate) fn unlock_and_set_pos(position: u32) {
     //Write the position to the 'Positon/Lock' sector of flash at the first 4 bytes
-    unsafe {
-        let _ = esp_rom_spiflash_erase_sector(POSITION_PAGE);
-        let _ = esp_rom_spiflash_write(POSITION_LOCATION, &position as *const u32, 4);
-    }
+    critical_section::with(|_| {
+        unsafe {
+            println!("Start");
 
+            let a = esp_rom_spiflash_erase_sector(POSITION_PAGE);
+
+            println!("Between");
+
+            let b = esp_rom_spiflash_write(POSITION_LOCATION, &position as *const u32, 4);
+
+            use esp_println::println;
+            println!("A: {}, B: {}", a, b);
+        }
+    });
 
 }
 
@@ -48,9 +60,11 @@ pub(crate) fn is_locked() -> bool {
 pub(crate) fn get_position() -> u32 {
     //Read the first u32
     let mut position = 0xFFFFFFFF;
-    unsafe {
-        let _ = esp_rom_spiflash_read(POSITION_LOCATION, & mut position as *mut u32, 4);
-    }
+    critical_section::with(|_| {
+        unsafe {
+            let _ = esp_rom_spiflash_read(POSITION_LOCATION, &mut position as *mut u32, 4);
+        }
+    });
     position
 }
 

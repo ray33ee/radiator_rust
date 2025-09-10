@@ -100,6 +100,6 @@ pub(crate) fn load_from_page<T: DeserializeOwned>(page_number: u32) -> Option<T>
 
     flash_storage.read(page_number * PAGE_SIZE + 4, & mut buff[0..len]).unwrap();
 
-    Some(serde_json::from_slice::<T>(&buff[..len]).unwrap())
+    serde_json::from_slice::<T>(&buff[..len]).ok()
 
 }

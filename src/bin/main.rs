@@ -64,7 +64,8 @@ use esp_hal::{
         Level,
         Output,
     },
-    uart::{Uart}
+    uart::{Uart},
+    otg_fs::{Usb, UsbBus},
 };
 use crate::{
     motor::Motor,
@@ -91,9 +92,15 @@ use embassy_net::{
     Stack,
     StackResources
 };
+use embedded_io::Write;
 use smoltcp::wire::IpEndpoint;
 use time::OffsetDateTime;
+use usb_device::bus::UsbBusAllocator;
 use crate::fsm::{CalibrateType, State, WarningType};
+use crate::motor::ABSOLUTE_MAX_POSITION;
+use usb_device::prelude::{UsbDeviceBuilder, UsbVidPid};
+use usbd_serial::{SerialPort, USB_CLASS_CDC};
+use crate::storages::WIFI_ADDRESS;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -121,6 +128,9 @@ static STYLES_CSS: &[u8] = core::include_bytes!("../../web/styles.css");
 static FAVICON: &[u8] = core::include_bytes!("../../web/favicon.png");
 
 pub(crate) const DUTY_MAX: u32 = 1 << 12;
+
+
+static mut EP_MEMORY: [u32; 1024] = [0; 1024];
 
 #[embassy_executor::task]
 async fn net_task(mut runner: embassy_net::Runner<'static, WifiDevice<'static>>) -> ! {
@@ -1028,6 +1038,104 @@ async fn led_task(
 }
 
 #[embassy_executor::task]
+async fn usb_cdc(usb_bus: & 'static UsbBusAllocator<UsbBus<Usb<'static>>>) {
+    let mut serial = SerialPort::new(usb_bus);
+
+    let mut usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x303A, 0x3001))
+        .device_class(USB_CLASS_CDC)
+        .build();
+
+    let mut ssid = [0u8; 64];
+    let mut pass = [0u8; 64];
+
+    // None  = not started (for ssid), or not yet entering (for pass)
+    // Some(n) = current length collected so far
+    let mut ssid_len: Option<usize> = None;
+    let mut pass_len: Option<usize> = None;
+
+    let _ = serial.write(b"Press enter to start...\r\n");
+
+    let mut byte = [0u8; 1];
+
+    loop {
+        Timer::after(Duration::from_millis(1)).await;
+
+        if !usb_dev.poll(&mut [&mut serial]) {
+            continue;
+        }
+
+        if let Ok(1) = serial.read(&mut byte) {
+            let b = byte[0];
+
+            // --- Stage 0: waiting for Enter to start ---
+            if ssid_len.is_none() {
+                if b == b'\r' || b == b'\n' {
+                    let _ = serial.write(b"Please enter ssid:\r\n");
+                    ssid_len = Some(0);
+                }
+                continue;
+            }
+
+            // --- Stage 1: entering SSID (echo chars) ---
+            if pass_len.is_none() {
+                let mut n = ssid_len.unwrap();
+                if b == b'\r' || b == b'\n' {
+                    let _ = serial.write(b"\r\nPlease enter password:\r\n");
+                    pass_len = Some(0);
+                } else if (b == 0x08 || b == 0x7F) && n > 0 {
+                    n -= 1;
+                    ssid_len = Some(n);
+                    let _ = serial.write(b"\x08 \x08");
+                } else if n < ssid.len() {
+                    ssid[n] = b;
+                    n += 1;
+                    ssid_len = Some(n);
+                    let _ = serial.write(&[b]); // echo typed char
+                }
+                continue;
+            }
+
+            // --- Stage 2: entering password (echo '*') ---
+            let mut m = pass_len.unwrap();
+            if b == b'\r' || b == b'\n' {
+                let _ = serial.write(b"\r\n");
+                break; // finished: ssid[..ssid_len], pass[..pass_len]
+            } else if (b == 0x08 || b == 0x7F) && m > 0 {
+                m -= 1;
+                pass_len = Some(m);
+                let _ = serial.write(b"\x08 \x08");
+            } else if m < pass.len() {
+                pass[m] = b;
+                m += 1;
+                pass_len = Some(m);
+                let _ = serial.write(b"*");
+            }
+        }
+    }
+
+    // You handle the rest from here.
+    let s_len = ssid_len.unwrap_or(0).min(ssid.len());
+    let p_len = pass_len.unwrap_or(0).min(pass.len());
+    let ssid_slice = &ssid[..s_len];
+    let pass_slice = &pass[..p_len];
+
+    println!("SSID: {:?}", ssid_slice);
+    println!("PASS: {:?}", pass_slice);
+
+    storages::save_to_page(WIFI_ADDRESS, (String::from(core::str::from_utf8(ssid_slice).unwrap()), String::from(core::str::from_utf8(pass_slice).unwrap())));
+
+    serial.write(b"Done.\r\n").unwrap();
+
+    usb_dev.poll(&mut [&mut serial]);
+
+    loop {
+
+        Timer::after(Duration::from_secs(1000)).await;
+
+    }
+}
+
+#[embassy_executor::task]
 async fn heart_beat(mut beat_output: esp_hal::gpio::Output<'static>) {
 
     loop {
@@ -1053,32 +1161,39 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    let _uart = Uart::new(peripherals.UART0, esp_hal::uart::Config::default()).unwrap()
-        .with_rx(peripherals.GPIO7)
-        .with_tx(peripherals.GPIO9);
-
-    print!("{}", crate::backtrace::RESET);
-
     /* Pin definitions */
 
-    let red_pin = peripherals.GPIO36;
-    let green_pin = peripherals.GPIO38;
-    let blue_pin = peripherals.GPIO40;
+    let red_pin = peripherals.GPIO17;
+    let green_pin = peripherals.GPIO16;
+    let blue_pin = peripherals.GPIO15;
 
-    let mode_button_pin = peripherals.GPIO14;
+    let mode_button_pin = peripherals.GPIO3;
 
-    //let ONE_WIRE_PIN = peripherals.GPIO9;
-    let sda_pin = peripherals.GPIO17;
-    let scl_pin = peripherals.GPIO16;
+    let sda_pin = peripherals.GPIO14;
+    let scl_pin = peripherals.GPIO13;
 
-    let coil_a1_pin = peripherals.GPIO0;
-    let coil_a2_pin = peripherals.GPIO3;
-    let coil_b1_pin = peripherals.GPIO1;
-    let coil_b2_pin = peripherals.GPIO2;
+    let coil_a1_pin = peripherals.GPIO4;
+    let coil_a2_pin = peripherals.GPIO8;
+    let coil_b1_pin = peripherals.GPIO10;
+    let coil_b2_pin = peripherals.GPIO6;
 
-    let exception_led_pin = peripherals.GPIO39;
-    let panic_led_pin = peripherals.GPIO37;
-    let beat_led_pin = peripherals.GPIO35;
+    let motor_enable_pin = peripherals.GPIO39;
+
+    let exception_led_pin = peripherals.GPIO34;
+    let panic_led_pin = peripherals.GPIO33;
+    let beat_led_pin = peripherals.GPIO21;
+
+    let tx_pin = peripherals.GPIO36;
+    let rx_pin = peripherals.GPIO35;
+
+    let dp_pin = peripherals.GPIO20;
+    let dm_pin = peripherals.GPIO19;
+
+    let _uart = Uart::new(peripherals.UART0, esp_hal::uart::Config::default()).unwrap()
+        .with_rx(rx_pin)
+        .with_tx(tx_pin);
+
+    print!("{}", crate::backtrace::RESET);
 
     /* Setup Diagnostic LED pins */
 
@@ -1153,6 +1268,9 @@ async fn main(spawner: Spawner) {
     spawner.spawn(led_task(led_channel, brightness_channel, RGBState::OneFlash(Color { r: 0, g: 255, b:255 }, 100, 100))).unwrap(); //Unrecoverable
 
 
+    let timer0 = SystemTimer::new(peripherals.SYSTIMER);
+    esp_hal_embassy::init(timer0.alarm0);
+
     println!("Done.");
 
     /* Configure CPU tsense */
@@ -1197,23 +1315,29 @@ async fn main(spawner: Spawner) {
 
     println!("Done.");
 
+    /* Initialise motor */
+
+    print!("Init motor...");
+
+    let mut motor = Motor::new(coil_a1_pin, coil_a2_pin, coil_b1_pin, coil_b2_pin, motor_enable_pin);
+
+    println!("Done.");
+
     /* Check for calibration */
 
     print!("Calibration Check...");
 
     if storages::is_locked() {
-
         fsm.force_change(fsm::State::Calibrate(CalibrateType::MotorLocked));
-
-
     }
-    println!("Done.");
 
-    /* Initialise motor */
+    if motor.max_position() == 0 {
+        fsm.force_change(fsm::State::Calibrate(CalibrateType::MissingMaxPos));
+    }
 
-    print!("Init motor...");
-
-    let mut motor = Motor::new(coil_a1_pin, coil_a2_pin, coil_b1_pin, coil_b2_pin);
+    if motor.max_position() > ABSOLUTE_MAX_POSITION {
+        fsm.force_change(fsm::State::Calibrate(CalibrateType::AbsoluteMaxExceeded));
+    }
 
     println!("Done.");
 
@@ -1233,17 +1357,25 @@ async fn main(spawner: Spawner) {
 
     let (ssid, password) = match storages::load_from_page(storages::WIFI_ADDRESS) {
         Some((ssid, password)) => (ssid, password),
-        None => (String::new(), String::new())
+        None => { (String::new(), String::new()) }
     };
+
+    if (ssid.is_empty() && password.is_empty()) || mode_button.is_pressed() {
+        //Spawn usb_cdc thread
+
+        let usb = Usb::new(peripherals.USB0, dp_pin, dm_pin);
+        let usb_bus = UsbBus::new(usb, unsafe { &mut *core::ptr::addr_of_mut!(EP_MEMORY) });
+
+
+        static USB_BUS_ALLOC: StaticCell<UsbBusAllocator<UsbBus<Usb<'static>>>> = StaticCell::new();
+        let usb_bus_alloc: & 'static mut UsbBusAllocator<UsbBus<Usb<'static>>>  = USB_BUS_ALLOC.init(usb_bus);
+
+        spawner.spawn(usb_cdc(usb_bus_alloc)).unwrap();
+    }
 
     let rng = Rng::new(peripherals.RNG);
 
-    let timer0 = SystemTimer::new(peripherals.SYSTIMER);
-    esp_hal_embassy::init(timer0.alarm0);
-
     let timer1 = TimerGroup::new(peripherals.TIMG0);
-
-
     static WIFI_INIT: StaticCell<esp_wifi::EspWifiController<'_>> = StaticCell::new();
     let wifi_init = WIFI_INIT.init(esp_wifi::init(timer1.timer0, rng).unwrap());
 
@@ -1773,10 +1905,11 @@ async fn main(spawner: Spawner) {
                         mode_button.clear_actions();
                         mode_button.push_action(mode_button::Action::Retract);
                         mode_button.push_action(mode_button::Action::ZeroUnlock);
+                        mode_button.push_action(mode_button::Action::Cancel);
                     }
 
                     //FSM may only leave calibrate mode for warnings
-                    fsm.handle_request(|state| state.is_warning());
+                    fsm.handle_request(|state| state.is_warning() || (state.is_cancel() && motor.max_position() != 0 && !storages::is_locked() && motor.max_position() < ABSOLUTE_MAX_POSITION));
                 }
                 crate::fsm::State::SafeMode => {
 
@@ -1804,6 +1937,8 @@ async fn main(spawner: Spawner) {
 
 
                         mode_button.clear_actions();
+
+                        storages::lock();
                     }
 
 
@@ -1885,8 +2020,8 @@ async fn main(spawner: Spawner) {
                     }
 
 
-                    //The only way to move past a warning is with the special Ignore state
-                    fsm.handle_request(|state| state.is_cancel());
+                    //The only way to move past a warning is with the special Ignore state, calibrate or safe mode
+                    fsm.handle_request(|state| state.is_cancel() || state.is_calibrate() || state.is_safe_mode());
                 }
                 crate::fsm::State::Cancel => {
                     //Ignore is a special state that is the only way to exit warnings, leave boost early

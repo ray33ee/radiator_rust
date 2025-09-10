@@ -4,6 +4,16 @@
 
 # Config
 
+On first boot, wifi connection will fail as there are no valid credential stored, so the device will enter a wifi warning (flashing 5 times).
+
+When this happens, the device will automatically enter USB DCD mode, using your favorite terminal app connect to the USB serial port. 
+
+Press enter, this should promt you to enter the ssid. Type it, press enter again and enter the password, then press enter. 
+
+You should see a 'Done.' message which means that the credentials are stored. 
+
+If you made a mistake or need to change the WiFi information again, simply hold the MODE button during boot and the device will enter USB CDC mode, then repeat the above steps again.
+
 # Web server
 
 Once the device connects to the WiFi, it will host a web server which can be used to control the device from any browser on the same network. Just type the IP address into your web browser on the same network and it will show!
@@ -22,9 +32,21 @@ At any time you can manually move the motor and set the max position but the dev
 
 If the motor is interrupted during movement, there is a chance that a recalibration is needed. This does not affect the max position however. Users only need to retract until stall, then unlock and zero, then reset.
 
+Once the following conditions have been met:
+
+- Device is zeroed and unlocked
+- Max position is larger than 0
+- Max position is less than absolute max (50)
+
+the user can safely leave calibrate mode by pressing cancel in the web server or cancelling via the MODE button.
+
+If during normal use the aformentioned three conditions are not met when motor movement starts, the device will enter calibrate mode. The web server gives the reason for entering calibrate mode, so this can be used to correct any issues.
+
 # Safe mode
 
-When installing, uninstalling or powering down the valve in the future, the user should out the device in safe mode. This will ensure that a) the motor is fully retracted when installing and b) that the device is correctly powered down. 
+When installing, uninstalling or powering down the valve in the future, the user should out the device in safe mode. This will ensure that a) the motor is fully retracted when installing and b) that the device is not powered down during motor movement and c) locks the motor so that on startup the device is not moved unexpectedly. 
+
+On startup the device will enter calibrate mode (due to being locked) to protect the motor. When it is safe, the user can unlock the motor, cancel out of calibrate mode and continue using.
 
 # Mode button
 

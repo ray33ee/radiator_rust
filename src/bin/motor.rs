@@ -17,6 +17,7 @@ pub(crate) enum MotorError {
 
 pub(crate) struct Motor<'a> {
     stepper: Stepper4<Output<'a>, Output<'a>, Output<'a>, Output<'a>, Delay>,
+    enable: Output<'a>,
     steps_per_rev: u32,
     position: u32,
 
@@ -26,12 +27,14 @@ pub(crate) struct Motor<'a> {
 }
 
 impl<'a> Motor<'a> {
-    pub(crate) fn new<P1: OutputPin + 'a, P2: OutputPin + 'a, P3: OutputPin + 'a, P4: OutputPin + 'a>(p1: P1, p2: P2, p3: P3, p4: P4) -> Self {
+    pub(crate) fn new<P1: OutputPin + 'a, P2: OutputPin + 'a, P3: OutputPin + 'a, P4: OutputPin + 'a, EN: OutputPin + 'a>(p1: P1, p2: P2, p3: P3, p4: P4, en: EN) -> Self {
 
         let op1 = Output::new(p1, Level::Low, OutputConfig::default());
         let op2 = Output::new(p2, Level::Low, OutputConfig::default());
         let op3 = Output::new(p3, Level::Low, OutputConfig::default());
         let op4 = Output::new(p4, Level::Low, OutputConfig::default());
+
+        let enable = Output::new(en, Level::Low, OutputConfig::default());
 
         let mut stepper = create_stepper_4pin(op1, op2, op3, op4, Delay::new(), STEPS_PER_REV);
 
@@ -44,6 +47,7 @@ impl<'a> Motor<'a> {
 
         Self {
             stepper,
+            enable,
             steps_per_rev: STEPS_PER_REV,
             position: storages::get_position(),
             max_position,
@@ -53,13 +57,17 @@ impl<'a> Motor<'a> {
     }
 
     pub(crate) fn calibrate_push(& mut self, revolutions: u32) {
+        self.enable.set_high();
         let _ = self.stepper.step(self.steps_per_rev as i32 * revolutions as i32);
         let _ = self.stepper.deenergise();
+        self.enable.set_low();
     }
 
     pub(crate) fn calibrate_pull(& mut self, revolutions: u32) {
+        self.enable.set_high();
         let _ = self.stepper.step(self.steps_per_rev as i32 * -(revolutions as i32));
         let _ = self.stepper.deenergise();
+        self.enable.set_low();
     }
 
     fn move_valve(& mut self, to_position: u32) -> Result<(), MotorError> {
@@ -83,6 +91,8 @@ impl<'a> Motor<'a> {
 
         let revs = to_position as i32 - self.position as i32;
 
+        self.enable.set_high();
+
         storages::lock();
 
         critical_section::with( |_| {
@@ -92,6 +102,8 @@ impl<'a> Motor<'a> {
         let _ = self.stepper.deenergise();
 
         storages::unlock_and_set_pos(to_position);
+
+        self.enable.set_low();
 
         self.position = to_position;
 

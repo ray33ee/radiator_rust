@@ -90,7 +90,7 @@ fn panic_handler(info: &core::panic::PanicInfo<'_>) -> ! {
     println!("Backtrace:");
     println!();
 
-    _ll_led_on(37); //Turn on the panic LED
+    _ll_led_on(33); //Turn on the panic LED
 
     let backtrace = esp_backtrace::Backtrace::capture();
 
@@ -127,7 +127,7 @@ unsafe fn __user_exception(cause: arch::ExceptionCause, context: arch::Context) 
 
     _ll_clear_gb();
 
-    _ll_led_on(39); //Turn on the exception LED
+    _ll_led_on(34); //Turn on the exception LED
 
     println!("{}", RED);
 

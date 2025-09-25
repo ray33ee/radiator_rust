@@ -4,3 +4,5 @@
 	- Think hard about the relevant information: ![Mockup](sketch.png)
 	- For timers (boost time remaining, device uptime) store a time stamp and calculate the time in JS, instead of polling server every second
 - Calibrate push must as user for the number of revolutions (then they use this to determine the max position)
+- Brightness schedule is allowing overlapping slots - look into all schedule stuff to make sure overlapping slots are not allowed at all. Overlapping times with the same or different settings are prohibited
+- The web pages for brightness say 'Summer Schedule' above the table

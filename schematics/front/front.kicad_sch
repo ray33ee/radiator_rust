@@ -4089,10 +4089,6 @@
 		(uuid "1017c47d-41ec-4e82-b51e-dbb1503de6a3")
 	)
 	(no_connect
-		(at 222.25 140.97)
-		(uuid "1939d35b-f4be-47e7-a19e-0da1993df09c")
-	)
-	(no_connect
 		(at 222.25 105.41)
 		(uuid "21fbaf68-f0b8-45f6-b712-b0c9c2689989")
 	)
@@ -5088,7 +5084,7 @@
 			)
 		)
 	)
-	(global_label "B1"
+	(global_label "B1(YELLOW)"
 		(shape input)
 		(at 77.47 40.64 0)
 		(fields_autoplaced yes)
@@ -5100,7 +5096,7 @@
 		)
 		(uuid "2541469b-9ab1-48bc-95a8-116d355a357d")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 82.9347 40.64 0)
+			(at 91.7038 40.64 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5132,7 +5128,7 @@
 			)
 		)
 	)
-	(global_label "B1"
+	(global_label "B1(YELLOW)"
 		(shape input)
 		(at 58.42 135.89 180)
 		(fields_autoplaced yes)
@@ -5144,7 +5140,7 @@
 		)
 		(uuid "2eab1ee1-33f7-4ca8-949a-d9fdbed43e3c")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 52.9553 135.89 0)
+			(at 44.1862 135.89 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5198,7 +5194,7 @@
 			)
 		)
 	)
-	(global_label "A2"
+	(global_label "A2(BLACK)"
 		(shape input)
 		(at 58.42 133.35 180)
 		(fields_autoplaced yes)
@@ -5210,7 +5206,7 @@
 		)
 		(uuid "57f3b066-a3d3-4381-a0c7-2b3a219a9c7e")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 53.1367 133.35 0)
+			(at 45.5166 133.35 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5418,7 +5414,7 @@
 			)
 		)
 	)
-	(global_label "A2"
+	(global_label "A2(BLACK)"
 		(shape input)
 		(at 77.47 43.18 0)
 		(fields_autoplaced yes)
@@ -5430,7 +5426,7 @@
 		)
 		(uuid "7f25fa65-7db4-4f20-b253-f93aee36d7f2")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 82.7533 43.18 0)
+			(at 90.3734 43.18 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5550,7 +5546,7 @@
 			)
 		)
 	)
-	(global_label "B2"
+	(global_label "B2(RED)"
 		(shape input)
 		(at 58.42 138.43 180)
 		(fields_autoplaced yes)
@@ -5562,7 +5558,7 @@
 		)
 		(uuid "9c407f7f-bc0f-40b0-944e-0137eb44fb6a")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 52.9553 138.43 0)
+			(at 47.5729 138.43 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5880,7 +5876,7 @@
 			)
 		)
 	)
-	(global_label "A1"
+	(global_label "A1(WHITE)"
 		(shape input)
 		(at 58.42 130.81 180)
 		(fields_autoplaced yes)
@@ -5892,7 +5888,7 @@
 		)
 		(uuid "d3dfbabd-23cc-4808-9967-95abaab9575d")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 53.1367 130.81 0)
+			(at 45.94 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5924,7 +5920,7 @@
 			)
 		)
 	)
-	(global_label "A1"
+	(global_label "A1(WHITE)"
 		(shape input)
 		(at 77.47 38.1 0)
 		(fields_autoplaced yes)
@@ -5936,7 +5932,7 @@
 		)
 		(uuid "dddf209b-2bad-4b7c-b0a7-6a47b5e8db7a")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 82.7533 38.1 0)
+			(at 89.95 38.1 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6078,7 +6074,7 @@
 			)
 		)
 	)
-	(global_label "B2"
+	(global_label "B2(RED)"
 		(shape input)
 		(at 77.47 45.72 0)
 		(fields_autoplaced yes)
@@ -6090,7 +6086,7 @@
 		)
 		(uuid "fdff1a42-0927-46e8-8713-1ec71c4a2e46")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 82.9347 45.72 0)
+			(at 88.3171 45.72 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6244,7 +6240,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "160e754e-4861-436a-854f-a3575927d526")
-		(property "Reference" "R5"
+		(property "Reference" "R2"
 			(at 203.2 107.9499 0)
 			(effects
 				(font
@@ -6298,7 +6294,7 @@
 		(instances
 			(project "front"
 				(path "/9ab842ed-f276-49c7-9df5-9dc568974693"
-					(reference "R5")
+					(reference "R2")
 					(unit 1)
 				)
 			)
@@ -7133,7 +7129,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "53272981-05a2-47a9-a4d3-5f4cd72774bb")
-		(property "Reference" "R3"
+		(property "Reference" "R1"
 			(at 35.56 170.1799 0)
 			(effects
 				(font
@@ -7187,7 +7183,7 @@
 		(instances
 			(project ""
 				(path "/9ab842ed-f276-49c7-9df5-9dc568974693"
-					(reference "R3")
+					(reference "R1")
 					(unit 1)
 				)
 			)
@@ -8161,7 +8157,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a345beaa-c952-4e1a-a0ae-533209ea6f10")
-		(property "Reference" "R4"
+		(property "Reference" "R3"
 			(at 210.82 107.9499 0)
 			(effects
 				(font
@@ -8215,7 +8211,7 @@
 		(instances
 			(project ""
 				(path "/9ab842ed-f276-49c7-9df5-9dc568974693"
-					(reference "R4")
+					(reference "R3")
 					(unit 1)
 				)
 			)
@@ -8772,7 +8768,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d5307795-c8bc-40cf-8bce-5f264e348f8e")
-		(property "Reference" "J6"
+		(property "Reference" "J4"
 			(at 152.4 30.48 0)
 			(effects
 				(font
@@ -8842,7 +8838,7 @@
 		(instances
 			(project ""
 				(path "/9ab842ed-f276-49c7-9df5-9dc568974693"
-					(reference "J6")
+					(reference "J4")
 					(unit 1)
 				)
 			)

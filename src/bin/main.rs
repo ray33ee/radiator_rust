@@ -1169,13 +1169,13 @@ async fn main(spawner: Spawner) {
 
     let mode_button_pin = peripherals.GPIO3;
 
-    let sda_pin = peripherals.GPIO14;
-    let scl_pin = peripherals.GPIO13;
+    let sda_pin = peripherals.GPIO13;
+    let scl_pin = peripherals.GPIO14;
 
-    let coil_a1_pin = peripherals.GPIO4;
-    let coil_a2_pin = peripherals.GPIO8;
-    let coil_b1_pin = peripherals.GPIO10;
-    let coil_b2_pin = peripherals.GPIO6;
+    let coil_a1_pin = peripherals.GPIO45; //Red
+    let coil_a2_pin = peripherals.GPIO42; //Yellow
+    let coil_b1_pin = peripherals.GPIO40; //White
+    let coil_b2_pin = peripherals.GPIO41; //Black
 
     let motor_enable_pin = peripherals.GPIO39;
 

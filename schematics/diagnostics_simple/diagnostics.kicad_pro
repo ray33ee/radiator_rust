@@ -37,9 +37,9 @@
         "other_text_thickness": 0.15,
         "other_text_upright": false,
         "pads": {
-          "drill": 1.152,
-          "height": 1.152,
-          "width": 1.152
+          "drill": 0.8,
+          "height": 1.27,
+          "width": 2.54
         },
         "silk_line_width": 0.1,
         "silk_text_italic": false,
@@ -48,7 +48,7 @@
         "silk_text_thickness": 0.1,
         "silk_text_upright": false,
         "zones": {
-          "min_clearance": 0.0
+          "min_clearance": 0.2
         }
       },
       "diff_pair_dimensions": [
@@ -124,19 +124,19 @@
         "max_error": 0.005,
         "min_clearance": 0.1,
         "min_connection": 0.0,
-        "min_copper_edge_clearance": 0.5,
+        "min_copper_edge_clearance": 0.2,
         "min_groove_width": 0.0,
         "min_hole_clearance": 0.2,
-        "min_hole_to_hole": 0.2,
+        "min_hole_to_hole": 0.25,
         "min_microvia_diameter": 0.2,
         "min_microvia_drill": 0.1,
         "min_resolved_spokes": 2,
         "min_silk_clearance": 0.0,
         "min_text_height": 0.8,
         "min_text_thickness": 0.08,
-        "min_through_hole_diameter": 0.1,
-        "min_track_width": 0.1,
-        "min_via_annular_width": 0.075,
+        "min_through_hole_diameter": 0.2,
+        "min_track_width": 0.16,
+        "min_via_annular_width": 0.1,
         "min_via_diameter": 0.4,
         "solder_mask_to_copper_clearance": 0.005,
         "use_height_for_length_calcs": true
@@ -188,7 +188,6 @@
       "track_widths": [
         0.0,
         0.2,
-        0.27,
         0.4
       ],
       "tuning_pattern_settings": {
@@ -223,8 +222,8 @@
           "drill": 0.0
         },
         {
-          "diameter": 0.45,
-          "drill": 0.3
+          "diameter": 0.4,
+          "drill": 0.2
         }
       ],
       "zones_allow_external_fillets": false
@@ -469,14 +468,14 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "front.kicad_pro",
+    "filename": "diagnostics.kicad_pro",
     "version": 3
   },
   "net_settings": {
     "classes": [
       {
         "bus_width": 12,
-        "clearance": 0.1,
+        "clearance": 0.2,
         "diff_pair_gap": 0.25,
         "diff_pair_via_gap": 0.25,
         "diff_pair_width": 0.2,
@@ -506,7 +505,7 @@
       "idf": "",
       "netlist": "",
       "plot": "",
-      "pos_files": "output",
+      "pos_files": "",
       "specctra_dsn": "",
       "step": "",
       "svg": "",
@@ -578,54 +577,12 @@
           "label": "Datasheet",
           "name": "Datasheet",
           "show": true
-        },
-        {
-          "group_by": false,
-          "label": "Manufacturer",
-          "name": "Manufacturer",
-          "show": false
-        },
-        {
-          "group_by": false,
-          "label": "Manufacturer Part",
-          "name": "Manufacturer Part",
-          "show": false
-        },
-        {
-          "group_by": false,
-          "label": "Supplier",
-          "name": "Supplier",
-          "show": false
-        },
-        {
-          "group_by": false,
-          "label": "Supplier Part",
-          "name": "Supplier Part",
-          "show": false
-        },
-        {
-          "group_by": false,
-          "label": "LCSC Part Name",
-          "name": "LCSC Part Name",
-          "show": false
-        },
-        {
-          "group_by": false,
-          "label": "Description",
-          "name": "Description",
-          "show": false
-        },
-        {
-          "group_by": false,
-          "label": "#",
-          "name": "${ITEM_NUMBER}",
-          "show": false
         }
       ],
       "filter_string": "",
       "group_symbols": true,
       "include_excluded_from_bom": true,
-      "name": "",
+      "name": "Default Editing",
       "sort_asc": true,
       "sort_field": "Reference"
     },
@@ -671,7 +628,7 @@
   },
   "sheets": [
     [
-      "9ab842ed-f276-49c7-9df5-9dc568974693",
+      "18d2c1f8-e37d-4227-b3b9-93bdfc5d40d0",
       "Root"
     ]
   ],

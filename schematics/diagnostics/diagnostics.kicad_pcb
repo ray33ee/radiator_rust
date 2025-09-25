@@ -922,7 +922,7 @@
 			(net 2 "GND")
 			(pinfunction "EP")
 			(pintype "passive")
-			(uuid "d79bafc5-25ee-4060-8bb3-46f082957832")
+			(uuid "e84e0282-e91f-4cae-85ff-3f6cb5c5fa65")
 		)
 		(pad "0" thru_hole oval
 			(at 5.62 -1.388 90)
@@ -933,7 +933,7 @@
 			(net 2 "GND")
 			(pinfunction "EP")
 			(pintype "passive")
-			(uuid "d79bafc5-25ee-4060-8bb3-46f082957832")
+			(uuid "2260978b-c930-4540-adc2-6ee443115ebe")
 		)
 		(pad "0" thru_hole oval
 			(at 5.62 2.612 90)
@@ -944,7 +944,7 @@
 			(net 2 "GND")
 			(pinfunction "EP")
 			(pintype "passive")
-			(uuid "d79bafc5-25ee-4060-8bb3-46f082957832")
+			(uuid "2b96da25-a2f3-433a-a459-363576107f0c")
 		)
 		(pad "A1" smd rect
 			(at -3.35 -2.612 90)

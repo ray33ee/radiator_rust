@@ -20,7 +20,7 @@
       "footprints": true,
       "graphics": true,
       "keepouts": true,
-      "lockedItems": true,
+      "lockedItems": false,
       "otherItems": true,
       "pads": true,
       "text": true,
@@ -58,7 +58,7 @@
     "ssh_key": ""
   },
   "meta": {
-    "filename": "top.kicad_prl",
+    "filename": "diagnostics.kicad_prl",
     "version": 5
   },
   "net_inspector_panel": {
@@ -88,15 +88,15 @@
     ],
     "col_widths": [
       294,
-      280,
-      174,
+      279,
+      173,
       120,
-      174,
-      174,
-      174,
+      173,
+      173,
+      173,
       126,
-      174,
-      174
+      173,
+      173
     ],
     "custom_group_rules": [],
     "expanded_rows": [],

@@ -76,10 +76,6 @@ impl<'a> Motor<'a> {
             return Err(MotorError::MotorLocked);
         }
 
-        if self.position == to_position {
-            return Ok(());
-        }
-
         //Do not move past absolute maximum to protect enclosure
         if to_position > ABSOLUTE_MAX_POSITION {
             return Err(MotorError::AbsoluteMaxExceeded);
@@ -87,6 +83,10 @@ impl<'a> Motor<'a> {
 
         if self.max_position == 0 {
             return Err(MotorError::MotorMaxNotSet);
+        }
+
+        if self.position == to_position {
+            return Ok(());
         }
 
         let revs = to_position as i32 - self.position as i32;

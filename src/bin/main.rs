@@ -40,6 +40,7 @@ use esp_println::{println, print};
 use alloc::{format, vec};
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::net::{IpAddr, Ipv4Addr};
 use static_cell::StaticCell;
 use esp_wifi::wifi::WifiDevice;
 use esp_hal::{
@@ -93,6 +94,7 @@ use embassy_net::{
     StackResources
 };
 use embedded_io::Write;
+use serde_json::Value;
 use smoltcp::wire::IpEndpoint;
 use time::OffsetDateTime;
 use usb_device::bus::UsbBusAllocator;
@@ -416,6 +418,8 @@ enum RequestMain {
     SetWinterSchedule(Vec<ScheduleEntry>),
     SetBrightnessSchedule(Vec<BrightnessEntry>),
 
+    SetStaticIp(bool, embassy_net::Ipv4Address, embassy_net::Ipv4Address, embassy_net::Ipv4Address, embassy_net::Ipv4Address, embassy_net::Ipv4Address)
+
 }
 
 enum ResponseMain {
@@ -447,6 +451,13 @@ enum ResponseMain {
     },
     Network {
         mac_addr: [u8; 6],
+        is_static: bool,
+        ip_addr: embassy_net::Ipv4Address,
+        gateway: embassy_net::Ipv4Address,
+        dns1: embassy_net::Ipv4Address,
+        dns2: embassy_net::Ipv4Address,
+        dns3: embassy_net::Ipv4Address,
+
     },
     State {
         state: fsm::State,
@@ -714,6 +725,10 @@ async fn webserver_task(
                                         println!("Safe mode mode");
                                         send_200(& mut socket, None).await;
                                     }
+                                    (Some("factory"), Some("true")) => {
+                                        storages::factory_reset();
+                                        send_200(& mut socket, None).await;
+                                    }
 
                                     _ => send_404(&mut socket).await,
                                 }
@@ -956,12 +971,20 @@ async fn webserver_task(
                             ("GET", "/network") => {
                                 request.send(RequestMain::NetworkInfo).await;
 
-                                if let ResponseMain::Network { mac_addr } = response.receive().await {
+                                if let ResponseMain::Network { mac_addr, is_static, ip_addr, gateway, dns1, dns2, dns3 } = response.receive().await {
 
                                     let mac = format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
                                                       mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
 
-                                    let cards = vec![mac.as_str()];
+                                    let static_ip = if ip_addr.to_bits() != 0 { format!("{}", ip_addr) } else { format!("") };
+                                    let gateway = if gateway.to_bits() != 0 { format!("{}", gateway) } else { format!("") };
+                                    let dns1 = if dns1.to_bits() != 0 { format!("{}", dns1) } else { format!("") };
+                                    let dns2 = if dns2.to_bits() != 0 { format!("{}", dns2) } else { format!("") };
+                                    let dns3 = if dns3.to_bits() != 0 { format!("{}", dns3) } else { format!("") };
+
+                                    let is_static = if is_static { "true" } else { "false" };
+
+                                    let cards = vec![mac.as_str(), static_ip.as_str(), gateway.as_str(), dns1.as_str(), dns2.as_str(), dns3.as_str(), is_static];
 
 
                                     let _ = send_template("text/html", NETWORK_HTML, & mut socket, &cards).await;
@@ -969,6 +992,40 @@ async fn webserver_task(
                                     send_404(& mut socket).await;
                                 }
 
+                            }
+                            ("POST", "/network") => {
+                                println!("network '{:?}'", body);
+
+                                let v: Value = serde_json::from_str(body).unwrap();
+
+                                println!("is_static: {}", v["is_static"]);
+                                println!("ip: {}", v["ip"]);
+                                println!("gateway: {}", v["gateway"]);
+                                println!("dns: {:?}", v["dns1"]);
+
+                                use core::str::FromStr;
+
+                                let is_static = v["is_static"].as_bool().unwrap();
+                                let static_ip = if v["ip"].as_str().unwrap() != "" { embassy_net::Ipv4Address::from_str(v["ip"].as_str().unwrap()).unwrap() } else { embassy_net::Ipv4Address::from_bits(0) };
+                                let gateway = if v["gateway"].as_str().unwrap() != "" { embassy_net::Ipv4Address::from_str(v["gateway"].as_str().unwrap()).unwrap() } else { embassy_net::Ipv4Address::from_bits(0) };
+                                let dns1 = if v["dns1"].as_str().unwrap() != "" { embassy_net::Ipv4Address::from_str(v["dns1"].as_str().unwrap()).unwrap() } else { embassy_net::Ipv4Address::from_bits(0) };
+                                let dns2 = if v["dns2"].as_str().unwrap() != "" { embassy_net::Ipv4Address::from_str(v["dns2"].as_str().unwrap()).unwrap() } else { embassy_net::Ipv4Address::from_bits(0) };
+                                let dns3 = if v["dns3"].as_str().unwrap() != "" { embassy_net::Ipv4Address::from_str(v["dns3"].as_str().unwrap()).unwrap() } else { embassy_net::Ipv4Address::from_bits(0) };
+
+
+                                println!("IP: {}", static_ip);
+
+                                request.send(RequestMain::SetStaticIp (
+                                    is_static,
+                                    static_ip,
+                                    gateway,
+                                    dns1,
+                                    dns2,
+                                    dns3,
+                                )).await;
+
+
+                                send_200(& mut socket, None).await;
                             }
                             _ => {
                                 println!("Unknown");
@@ -1360,6 +1417,11 @@ async fn main(spawner: Spawner) {
         None => { (String::new(), String::new()) }
     };
 
+    let (mut is_static, mut static_ip, mut gateway, mut dns1, mut dns2, mut dns3) = match storages::load_from_page(storages::WIFI_IP) {
+        Some((is_static, static_ip, gateway, dns1, dns2, dns3)) => (is_static, static_ip, gateway, dns1, dns2, dns3),
+        None => { (false, embassy_net::Ipv4Address::from_bits(0), embassy_net::Ipv4Address::from_bits(0), embassy_net::Ipv4Address::from_bits(0), embassy_net::Ipv4Address::from_bits(0), embassy_net::Ipv4Address::from_bits(0)) }
+    };
+
     if (ssid.is_empty() && password.is_empty()) || mode_button.is_pressed() {
         //Spawn usb_cdc thread
 
@@ -1406,11 +1468,37 @@ async fn main(spawner: Spawner) {
 
         if let Ok(_) = wifi_controller.start() {
 
+            use core::str::FromStr;
+
+            let conf = if is_static {
+
+                let mut dnss = heapless::Vec::new();
+
+                if dns1.to_bits() != 0 {
+                    dnss.push(dns1.clone()).unwrap();
+                }
+
+                if dns2.to_bits() != 0 {
+                    dnss.push(dns2.clone()).unwrap();
+                }
+
+                if dns3.to_bits() != 0 {
+                    dnss.push(dns3.clone()).unwrap();
+                }
+
+                embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+                    address: embassy_net::Ipv4Cidr::new(static_ip.clone(), 24),
+                    gateway: if gateway.to_bits() == 0 { None } else { Some(gateway.clone()) },
+                    dns_servers: dnss,
+                })
+            } else {
+                embassy_net::Config::dhcpv4(Default::default())
+            };
 
             if let Ok(_) = wifi_controller.connect() {
                 let (stack, runner) = embassy_net::new(
                     interfaces.sta,
-                    embassy_net::Config::dhcpv4(Default::default()),
+                    conf,
                     resources,
                     rng.clone().random() as u64,
                 );
@@ -1635,6 +1723,12 @@ async fn main(spawner: Spawner) {
                     RequestMain::NetworkInfo => {
                         let network = ResponseMain::Network {
                             mac_addr: mac_address.clone(),
+                            is_static,
+                            ip_addr: static_ip,
+                            gateway,
+                            dns1,
+                            dns2,
+                            dns3,
                         };
 
                         response_channel.send(network).await;
@@ -1672,6 +1766,20 @@ async fn main(spawner: Spawner) {
                     }
                     RequestMain::SetBrightnessSchedule(v) => {
                         fsm.set_brightness_schedule(v);
+                    }
+                    RequestMain::SetStaticIp(_is_static, _static_ip, _gateway, _dns1, _dns2, _dns3 ) => {
+
+                        is_static = _is_static;
+                        static_ip = _static_ip;
+                        gateway = _gateway;
+                        dns1 = _dns1;
+                        dns2 = _dns2;
+                        dns3 = _dns3;
+
+                        storages::save_to_page(storages::WIFI_IP, (is_static, static_ip, gateway, dns1, dns2, dns3));
+
+
+
                     }
                 }
             }

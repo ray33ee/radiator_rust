@@ -60,7 +60,8 @@
 }
 
 /* Inputs inside settings items */
-.item input[type="number"] {
+.item input[type="number"],
+.item input[type="text"] {
   flex: 1 1 auto;
   padding: 8px 10px;
   border-radius: 8px;
@@ -71,12 +72,83 @@
   min-width: 60px;
 }
 
-.item input[type="number"]:focus {
+.item input[type="number"]:focus,
+.item input[type="text"]:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+/* Disabled inputs clearly greyed */
+.item input:disabled { opacity: 0.6; }
+
+/* Buttons */
+button {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+button.primary {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Toggle switch (DHCP ↔ Static) */
+.toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+}
+
+.switch {
+  position: relative;
+  width: 52px;
+  height: 28px;
+  display: inline-block;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0; height: 0;
+}
+.slider {
+  position: absolute;
+  inset: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: transform 150ms ease, background 150ms ease, box-shadow 150ms ease;
+  box-shadow: var(--shadow);
+}
+.slider::before {
+  content: "";
+  position: absolute;
+  height: 22px; width: 22px;
+  left: 3px; top: 50%;
+  transform: translateY(-50%);
+  background: var(--card);
+  border-radius: 50%;
+  transition: transform 150ms ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,.2);
+}
+.switch input:checked + .slider {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.switch input:checked + .slider::before {
+  transform: translate(21px, -50%);
+}
+
+/* Small captions beside the switch */
+.switch-label {
+  font-size: 12px;
+  color: var(--muted);
+}
   </style>
 </head>
 <body>
@@ -106,7 +178,7 @@
         <div class="nav-group">
           <div class="nav-title">Controls</div>
           <a href="/thermostat">Thermostat</a>
-          <a href="/network">Schedule</a>
+          <a href="/schedule">Schedule</a>
           <div class="sub">
             <a href="/summer">Summer</a>
             <a href="/winter">Winter</a>
@@ -131,24 +203,205 @@
       <div class="settings">
         <section class="group">
           <h3>WiFi</h3>
-
           <div class="item">
             <div class="left">
               <div class="label">MAC address</div>
-              <div class="value" id="max-pos">{{0}}</div>
+              <div class="value" id="mac-address">{{0}}</div>
             </div>
             <div class="right"></div>
           </div>
+        </section>
 
-          
+        <section class="group">
+          <h3>Network Configuration</h3>
+
+          <form id="net-form" class="net-form">
+            <!-- Toggle: DHCP ↔ Static -->
+            <div class="item">
+              <div class="left">
+                <div class="label">IP configuration</div>
+                <div class="toggle-row" aria-live="polite">
+                  <span class="switch-label">DHCP</span>
+                  <label class="switch">
+                    <input id="modeSwitch" type="checkbox" role="switch"
+                           aria-label="Toggle Static IP" aria-checked="false" />
+                    <span class="slider"></span>
+                  </label>
+                  <span class="switch-label">Static</span>
+                </div>
+              </div>
+              <div class="right">
+                <button type="submit" class="primary">Apply</button>
+              </div>
+            </div>
+
+            <!-- Hidden field the backend reads -->
+            <input type="hidden" id="mode" name="mode" value="dhcp" />
+
+            <!-- IP Address -->
+            <div class="item static-only">
+              <div class="left">
+                <div class="label">IP Address (Static only)</div>
+                <input
+                  id="ip"
+                  name="ip"
+                  type="text"
+                  placeholder="e.g. 192.168.1.123"
+                  inputmode="numeric"
+                  pattern="^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$"
+                  value="{{1}}"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="right"></div>
+            </div>
+
+            <!-- Gateway -->
+            <div class="item static-only">
+              <div class="left">
+                <div class="label">Gateway</div>
+                <input
+                  id="gateway"
+                  name="gateway"
+                  type="text"
+                  placeholder="e.g. 192.168.1.1"
+                  inputmode="numeric"
+                  pattern="^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$"
+                  value="{{2}}"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="right"></div>
+            </div>
+
+            <!-- DNS Servers -->
+            <div class="item static-only">
+              <div class="left">
+                <div class="label">DNS Server 1</div>
+                <input
+                  id="dns1"
+                  name="dns1"
+                  type="text"
+                  placeholder="e.g. 1.1.1.1"
+                  inputmode="numeric"
+                  pattern="^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$"
+                  value="{{3}}"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="right"></div>
+            </div>
+
+            <div class="item static-only">
+              <div class="left">
+                <div class="label">DNS Server 2</div>
+                <input
+                  id="dns2"
+                  name="dns2"
+                  type="text"
+                  placeholder="optional"
+                  inputmode="numeric"
+                  pattern="^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$"
+                  value="{{4}}"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="right"></div>
+            </div>
+
+            <div class="item static-only">
+              <div class="left">
+                <div class="label">DNS Server 3</div>
+                <input
+                  id="dns3"
+                  name="dns3"
+                  type="text"
+                  placeholder="optional"
+                  inputmode="numeric"
+                  pattern="^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$"
+                  value="{{5}}"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="right"></div>
+            </div>
+
+            <input type="hidden" name="action" value="set_network" />
+          </form>
         </section>
       </div>
     </main>
   </div>
 
   <script>
-    // All requests are POSTs with query flags; page stays put.
+    // ---- Helpers ----
+    function ipv4Valid(str) {
+      const m = str.match(/^((25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}(25[0-5]|2[0-4]\d|[01]?\d?\d)$/);
+      return !!m;
+    }
 
+    // ---- Elements ----
+    const modeHidden = document.getElementById('mode');      // 'dhcp' | 'static'
+    const modeSwitch = document.getElementById('modeSwitch'); // checkbox switch
+    const staticInputs = Array.from(document.querySelectorAll('.static-only input'));
+    const form = document.getElementById('net-form');
+
+    // Default: DHCP
+    function updateModeUI() {
+      const isStatic = modeSwitch.checked;
+      modeHidden.value = isStatic ? 'static' : 'dhcp';
+      modeSwitch.setAttribute('aria-checked', String(isStatic));
+      staticInputs.forEach(inp => { inp.disabled = !isStatic; });
+    }
+
+    // Set initial state
+    modeSwitch.checked = {{6}}; // DHCP by default
+    updateModeUI();
+
+    modeSwitch.addEventListener('change', updateModeUI);
+
+    // Keep page in place: POST via fetch with FormData
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const v = id => document.getElementById(id).value.trim();
+      const [ip, gw, dns1, dns2, dns3] = [v('ip'), v('gateway'), v('dns1'), v('dns2'), v('dns3')];
+
+      if (modeHidden.value === 'static') {
+        if (!ipv4Valid(ip)) { alert('Invalid IP address'); return; } 
+      }
+
+      const body = {
+        is_static: modeSwitch.checked,
+        ip: ip,
+        gateway: gw,
+        dns1,
+        dns2,
+        dns3
+      };
+
+      try {
+        const res = await fetch('/network', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+          console.error(`POST failed: HTTP ${res.status}`);
+        } else {
+          console.log("Schedule posted successfully.");
+        }
+      } catch (err) {
+        console.error("POST failed:", err);
+      }
+
+    });
   </script>
 </body>
 </html>

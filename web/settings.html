@@ -412,6 +412,18 @@
             </form>
           </div>
         </div>
+
+        <div class="item">
+          <div class="left">
+            <div class="label">Factory reset</div>
+            <div class="value">Clear all saved settings (INCLUDING WiFi credentials!!)</div>
+          </div>
+          <div class="right">
+            <form id="factory-form">
+              <button class="btn btn-danger" type="submit">FACTORY RESET</button>
+            </form>
+          </div>
+        </div>
       </section>
 
       <!-- Safe -->
@@ -516,6 +528,20 @@
         });
       } catch (err) {
         console.error('Failed to panic', err);
+      }
+    });
+
+    document.getElementById('factory-form').addEventListener('submit', async function (e) {
+      e.preventDefault(); // stop normal navigation
+
+      const url = '/settings?factory=true';
+
+      try {
+        await fetch(url, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.error('Failed to factory reset', err);
       }
     });
 

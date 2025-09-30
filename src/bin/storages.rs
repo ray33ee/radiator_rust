@@ -16,7 +16,10 @@ pub(crate) const SCHEDULE_ADDRESS: u32 = 995;
 pub(crate) const MOTOR_ADDRESS: u32 = 994;
 pub(crate) const THERMO_ADDRESS: u32 = 993;
 pub(crate) const WIFI_ADDRESS: u32 = 992;
+pub(crate) const WIFI_IP: u32 = 991;
+
 const POSITION_PAGE: u32 = 1022; //
+
 
 
 const POSITION_LOCATION: u32 = POSITION_PAGE * PAGE_SIZE;
@@ -70,6 +73,19 @@ pub(crate) fn get_position() -> u32 {
 
 
 
+
+pub(crate) fn factory_reset() {
+    critical_section::with(|_| {
+        unsafe {
+            let _ = esp_rom_spiflash_erase_sector(SCHEDULE_ADDRESS);
+            let _ = esp_rom_spiflash_erase_sector(MOTOR_ADDRESS);
+            let _ = esp_rom_spiflash_erase_sector(THERMO_ADDRESS);
+            let _ = esp_rom_spiflash_erase_sector(WIFI_ADDRESS);
+            let _ = esp_rom_spiflash_erase_sector(WIFI_IP);
+            let _ = esp_rom_spiflash_erase_sector(POSITION_PAGE);
+        }
+    });
+}
 
 pub(crate) fn save_to_page<T: Serialize>(page_number: u32, value: T) {
     let serialized = serde_json::to_vec(&value).unwrap();
